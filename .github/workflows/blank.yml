@@ -1,0 +1,1038 @@
+name: Build Ultimate Light RU Geosite (RU Only)
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Каждый понедельник в 00:00 UTC (0 = воскресенье / 1 = понедельник)
+    - cron: "0 0 * * 0"
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    env:
+      # Актуальная полная GeoSite-база runetfreedom.
+      # В их текущем build workflow используется именно этот release branch.
+      GEOSITE_URL: https://raw.githubusercontent.com/runetfreedom/russia-blocked-geosite/release/geosite.dat
+      GEOSITE_SHA_URL: https://raw.githubusercontent.com/runetfreedom/russia-blocked-geosite/release/geosite.dat.sha256sum
+
+      HYDRA_GEOSITE_URL: https://github.com/hydraponique/roscomvpn-geosite/releases/latest/download/geosite.dat
+      GRIMBIRD_GEOSITE_URL: https://raw.githubusercontent.com/GrimbirdUsers/ru-routing-dat/main/geosite.dat
+      MVR_GEOSITE_URL: https://raw.githubusercontent.com/mvrvntn/routing/release/geosite.dat
+      YULARZHI_GEOSITE_URL: https://github.com/Yularzhi/geosite_russia/releases/latest/download/geosite.dat
+
+      INPUT_FILE: source-geosite.dat
+      HYDRA_INPUT_FILE: hydra-geosite.dat
+      GRIMBIRD_INPUT_FILE: grimbird-geosite.dat
+      MVR_INPUT_FILE: mvrvntn-geosite.dat
+      YULARZHI_INPUT_FILE: yularzhi-geosite.dat
+      OUTPUT_FILE: geosite_RU.dat
+      CATEGORY_FILE: geosite_RU_categories.txt
+      OUTPUT_SHA_FILE: geosite_RU.dat.sha256sum
+
+    steps:
+      # ------------------------------------------------------------
+      # 1. Repository
+      # ------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ------------------------------------------------------------
+      # 2. Clone current domain-list-community
+      #
+      # Используется только для автоматического определения
+      # актуальной структуры category-ru и новых *-ru категорий.
+      # ------------------------------------------------------------
+      - name: Clone domain-list-community
+        uses: actions/checkout@v4
+        with:
+          repository: v2fly/domain-list-community
+          path: domain-list-community
+          fetch-depth: 1
+
+      # ------------------------------------------------------------
+      # 3. Setup Go according to current domain-list-community
+      # ------------------------------------------------------------
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: domain-list-community/go.mod
+          cache-dependency-path: domain-list-community/go.sum
+
+      # ------------------------------------------------------------
+      # 4. Download source geosite.dat
+      # ------------------------------------------------------------
+      - name: Download source GeoSite files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "========================================"
+          echo "Downloading GeoSite sources"
+          echo "========================================"
+
+          curl -fL --retry 5 --retry-all-errors \
+            "$GEOSITE_URL" \
+            -o "$INPUT_FILE"
+
+          curl -fL --retry 5 --retry-all-errors \
+            "$GEOSITE_SHA_URL" \
+            -o source-geosite.dat.sha256sum
+
+          curl -fL --retry 5 --retry-all-errors \
+            "$HYDRA_GEOSITE_URL" \
+            -o "$HYDRA_INPUT_FILE"
+
+          curl -fL --retry 5 --retry-all-errors \
+            "$GRIMBIRD_GEOSITE_URL" \
+            -o "$GRIMBIRD_INPUT_FILE"
+
+          curl -fL --retry 5 --retry-all-errors \
+            "$MVR_GEOSITE_URL" \
+            -o "$MVR_INPUT_FILE"
+
+          curl -fL --retry 5 --retry-all-errors \
+            "$YULARZHI_GEOSITE_URL" \
+            -o "$YULARZHI_INPUT_FILE"
+
+          test -s "$INPUT_FILE"
+          test -s source-geosite.dat.sha256sum
+          test -s "$HYDRA_INPUT_FILE"
+          test -s "$GRIMBIRD_INPUT_FILE"
+          test -s "$MVR_INPUT_FILE"
+          test -s "$YULARZHI_INPUT_FILE"
+
+          echo
+          echo "========================================"
+          echo "Verifying SHA256 of runetfreedom source"
+          echo "========================================"
+
+          EXPECTED_SHA256="$(awk 'NF {print $1; exit}' source-geosite.dat.sha256sum)"
+          ACTUAL_SHA256="$(sha256sum "$INPUT_FILE" | awk '{print $1}')"
+
+          echo "Expected: $EXPECTED_SHA256"
+          echo "Actual:   $ACTUAL_SHA256"
+
+          if [ "$EXPECTED_SHA256" != "$ACTUAL_SHA256" ]; then
+            echo "ERROR: SHA256 mismatch for runetfreedom source!"
+            exit 1
+          fi
+
+          echo "SHA256 verification OK."
+
+          echo
+          echo "Downloaded sources:"
+          ls -lh "$INPUT_FILE" "$HYDRA_INPUT_FILE" "$GRIMBIRD_INPUT_FILE" "$MVR_INPUT_FILE" "$YULARZHI_INPUT_FILE"
+
+      # ------------------------------------------------------------
+      # 5. Build complete RU category manifest
+      # ------------------------------------------------------------
+      - name: Build RU category manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          DATA = Path("domain-list-community/data")
+          output = Path("selected_ru_categories.txt")
+
+          selected = set()
+          visited = set()
+          missing_v2fly = set()
+
+          def normalize(name: str) -> str:
+              return name.strip().lower()
+
+          def visit(name: str):
+              name = normalize(name)
+
+              if not name or name in visited:
+                  return
+
+              visited.add(name)
+              path = DATA / name
+
+              if not path.is_file():
+                  missing_v2fly.add(name)
+                  return
+
+              selected.add(f"runetfreedom|{name}")
+
+              try:
+                  text = path.read_text(encoding="utf-8", errors="ignore")
+              except Exception:
+                  return
+
+              for raw_line in text.splitlines():
+                  line = raw_line.split("#", 1)[0].strip()
+                  if not line:
+                      continue
+
+                  if line.lower().startswith("include:"):
+                      target = line.split(":", 1)[1].strip().split()[0]
+                      if re.fullmatch(r"[A-Za-z0-9_.!+-]+", target):
+                          visit(target)
+
+          # Основное ядро runetfreedom / v2fly.
+          visit("category-ru")
+
+          # Автоматически подхватываем новые *-ru категории.
+          for path in DATA.iterdir():
+              if path.is_file() and path.name.lower().endswith("-ru"):
+                  visit(path.name)
+
+          # Дополнительные категории runetfreedom / v2fly.
+          extra_categories = {
+              "ru-available-only-inside",
+              "category-geoblock-ru",
+              "category-media-ru-blocked",
+
+              "yandex", "vk", "mailru", "mailru-group", "kinopoisk",
+              "dzen", "ozon", "wildberries", "wb", "avito", "autoru",
+              "aviasales", "rutube", "wink", "2gis", "ok", "okko",
+              "sokolov", "x5", "mosmetro", "max",
+
+              "beget", "carrotquest", "cdek", "comssone", "drweb",
+              "envybox", "gismeteo", "group-ib", "headhunter", "ideco-ru",
+              "kaspersky", "kontur", "mindbox", "myoffice-ru", "netcraze",
+              "nic-ru", "positive-technologies", "regru", "selectel",
+              "servicepipe", "skyeng", "smena", "tilda", "timeweb",
+              "ucoz", "whoosh",
+
+              "megafon", "mts", "mts-ru", "rostelecom", "t2", "t2-ru",
+              "beeline",
+
+              "1c", "1cloud", "1tv", "aeroflot", "alfabank", "avru",
+              "bronevik", "cdnvideo", "citydrive", "dellin", "dixy",
+              "dnevnikru", "dns-shop", "dodopizza", "domclick", "edadeal",
+              "fastvps", "fixprice", "jivo", "kuper", "lemanapro",
+              "lenta", "lentaru", "magnit", "megamarket", "motivtelecom",
+              "ngenix", "ntv", "pochtaru", "psbank", "rambler", "rbc",
+              "rt", "ruvds", "rzd", "samokat", "smotrim", "tass",
+              "taxsee", "tbank", "tnt", "tutu", "vgtrk", "vtb",
+              "vkusnoitochka", "vkusvill", "zentotem",
+
+              "3ebra", "apptrackpets", "flomni", "foto-planeta", "gazfond-pn",
+              "litres", "meteoinfo", "nplus1", "ognihome", "ponyexpress",
+              "qms", "randomgodbot", "srv-hub", "t1", "vimu", "yourgood",
+
+              "corp.express", "express.ms", "public.express", "xlnk.ms",
+              "mfa.center", "multifactor",
+
+              "moex", "spvb", "banki", "finuslugi", "nspk", "mironline",
+              "mirpayonline", "sistema-capital", "efin", "credistory",
+              "nbki", "netmonet", "tips",
+          }
+
+          for name in sorted(extra_categories):
+              visit(name)
+
+          excluded = {
+              "private",
+              "category-ip-geo-detect",
+              "ipip",
+              "tld-ru",
+          }
+
+          selected = {
+              item for item in selected
+              if item.split("|", 1)[1] not in excluded
+          }
+
+          # hydraponique/roscomvpn-geosite
+          hydra_categories = {
+              "whitelist",
+              "category-ru",
+          }
+          for name in hydra_categories:
+              selected.add(f"hydra|{normalize(name)}")
+
+          # mvrvntn/routing — только CATEGORY-RU добавляется в общий RU.
+          mvr_categories = {
+              "category-ru",
+          }
+          for name in mvr_categories:
+              selected.add(f"mvrvntn|{normalize(name)}")
+
+          # Yularzhi/geosite_russia — только CATEGORY-RU добавляется в общий RU.
+          yularzhi_categories = {
+              "category-ru",
+          }
+          for name in yularzhi_categories:
+              selected.add(f"yularzhi|{normalize(name)}")
+
+          # GrimbirdUsers/ru-routing-dat
+          grimbird_categories = {
+              "category-ru-whitelist",
+              "ozon",
+              "ru-analytics",
+              "ru-cdn",
+              "ru-finance",
+              "ru-medical",
+              "ru-retail-extra",
+              "ru-transport",
+              "ru-tv",
+              "ru-whitelist-extended",
+              "swift",
+          }
+          for name in grimbird_categories:
+              selected.add(f"grimbird|{normalize(name)}")
+
+          selected = {
+              item for item in selected
+              if item and item.split("|", 1)[1]
+              and not item.split("|", 1)[1].startswith(".")
+          }
+
+          with output.open("w", encoding="utf-8") as f:
+              for item in sorted(selected):
+                  f.write(item + "\n")
+
+          print(f"\nManifest written to: {output}")
+          PY
+
+          cp selected_ru_categories.txt "$CATEGORY_FILE"
+
+          echo
+          echo "=== Total manifest entries ==="
+          wc -l "$CATEGORY_FILE"
+
+          echo
+          echo "=== External categories merged into RU ==="
+          grep -E '^(hydra|grimbird|mvrvntn|yularzhi)\|' "$CATEGORY_FILE"
+
+      # ------------------------------------------------------------
+      # 6. Create protobuf filter.
+      # ------------------------------------------------------------
+      - name: Create RU GeoSite protobuf filter
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p domain-list-community/tools/ru-geosite-filter
+
+          cat > domain-list-community/tools/ru-geosite-filter/main.go <<'EOF'
+          package main
+          
+          import (
+          	"bufio"
+          	"fmt"
+          	"os"
+          	"sort"
+          	"strings"
+          
+          	router "github.com/v2fly/v2ray-core/v5/app/router/routercommon"
+          	"google.golang.org/protobuf/proto"
+          )
+          
+          func normalizeName(value string) string {
+          	return strings.ToLower(strings.TrimSpace(value))
+          }
+          
+          func isRussianTLD(value string) bool {
+          	value = normalizeName(value)
+          	value = strings.TrimSuffix(value, ".")
+          	value = strings.TrimPrefix(value, ".")
+          
+          	switch value {
+          	case "ru", "su", "xn--p1ai", "рф":
+          		return true
+          	}
+          
+          	return strings.HasSuffix(value, ".ru") ||
+          		strings.HasSuffix(value, ".su") ||
+          		strings.HasSuffix(value, ".xn--p1ai") ||
+          		strings.HasSuffix(value, ".рф")
+          }
+          
+          func domainKey(domain *router.Domain) string {
+          	return fmt.Sprintf("%d|%s", domain.Type, normalizeName(domain.Value))
+          }
+          
+          // pruneCoveredRootDomains removes redundant child RootDomain rules
+          // when an ancestor RootDomain already covers their subdomains.
+          func pruneCoveredRootDomains(domains []*router.Domain) ([]*router.Domain, int) {
+          	roots := make(map[string]bool)
+          	for _, domain := range domains {
+          		if domain == nil || domain.Type != router.Domain_RootDomain {
+          			continue
+          		}
+          		value := normalizeName(domain.Value)
+          		if value != "" {
+          			roots[value] = true
+          		}
+          	}
+          
+          	result := make([]*router.Domain, 0, len(domains))
+          	removed := 0
+          	for _, domain := range domains {
+          		if domain == nil || domain.Type != router.Domain_RootDomain {
+          			result = append(result, domain)
+          			continue
+          		}
+          
+          		value := normalizeName(domain.Value)
+          		covered := false
+          		for parent := value; ; {
+          			dot := strings.IndexByte(parent, '.')
+          			if dot < 0 {
+          				break
+          			}
+          			parent = parent[dot+1:]
+          			if roots[parent] {
+          				covered = true
+          				break
+          			}
+          		}
+          
+          		if covered {
+          			removed++
+          			continue
+          		}
+          		result = append(result, domain)
+          	}
+          	return result, removed
+          }
+          
+          func loadGeoSite(path string) (*router.GeoSiteList, error) {
+          	data, err := os.ReadFile(path)
+          	if err != nil {
+          		return nil, err
+          	}
+          
+          	list := new(router.GeoSiteList)
+          	if err := proto.Unmarshal(data, list); err != nil {
+          		return nil, fmt.Errorf("invalid geosite %s: %w", path, err)
+          	}
+          
+          	return list, nil
+          }
+          
+          func loadManifest(path string) (map[string]map[string]bool, error) {
+          	file, err := os.Open(path)
+          	if err != nil {
+          		return nil, err
+          	}
+          	defer file.Close()
+          
+          	result := make(map[string]map[string]bool)
+          	scanner := bufio.NewScanner(file)
+          
+          	for scanner.Scan() {
+          		line := strings.TrimSpace(scanner.Text())
+          		if line == "" || strings.HasPrefix(line, "#") {
+          			continue
+          		}
+          
+          		parts := strings.SplitN(line, "|", 2)
+          		if len(parts) != 2 {
+          			return nil, fmt.Errorf("invalid manifest entry: %q", line)
+          		}
+          
+          		source := normalizeName(parts[0])
+          		category := normalizeName(parts[1])
+          		if source == "" || category == "" {
+          			return nil, fmt.Errorf("invalid manifest entry: %q", line)
+          		}
+          
+          		if result[source] == nil {
+          			result[source] = make(map[string]bool)
+          		}
+          		result[source][category] = true
+          	}
+          
+          	if err := scanner.Err(); err != nil {
+          		return nil, err
+          	}
+          
+          	return result, nil
+          }
+          
+          func cloneDomain(domain *router.Domain) *router.Domain {
+          	return proto.Clone(domain).(*router.Domain)
+          }
+          
+          func main() {
+          	if len(os.Args) != 8 {
+          		fmt.Fprintf(
+          			os.Stderr,
+          			"usage: %s runetfreedom.dat hydra.dat grimbird.dat mvrvntn.dat yularzhi.dat selected.txt output.dat\n",
+          			os.Args[0],
+          		)
+          		os.Exit(2)
+          	}
+          
+          	sources := map[string]string{
+          		"runetfreedom": os.Args[1],
+          		"hydra":        os.Args[2],
+          		"grimbird":     os.Args[3],
+          		"mvrvntn":      os.Args[4],
+          		"yularzhi":     os.Args[5],
+          	}
+          
+          	manifest, err := loadManifest(os.Args[6])
+          	if err != nil {
+          		panic(fmt.Errorf("failed to read manifest: %w", err))
+          	}
+          
+          	lists := make(map[string]*router.GeoSiteList)
+          	for source, path := range sources {
+          		list, err := loadGeoSite(path)
+          		if err != nil {
+          			panic(err)
+          		}
+          		lists[source] = list
+          	}
+          
+          	result := new(router.GeoSiteList)
+          	ruCategory := &router.GeoSite{CountryCode: "RU"}
+          	globalSeen := make(map[string]bool)
+          
+          	sourceCategoryCount := 0
+          	sourceDomainCount := 0
+          	writtenDomainCount := 0
+          	duplicateDomainCount := 0
+          	removedRussianDomainCount := 0
+          	removedUnsupportedTypeCount := 0
+          	convertedFullToRootCount := 0
+          	removedCoveredDomainCount := 0
+          	missingExternalCount := 0
+          
+          	matched := make(map[string]map[string]bool)
+          	for source := range sources {
+          		matched[source] = make(map[string]bool)
+          	}
+          
+          	for source, selectedCategories := range manifest {
+          		list, ok := lists[source]
+          		if !ok {
+          			panic(fmt.Sprintf("unknown source in manifest: %s", source))
+          		}
+          
+          		for _, site := range list.Entry {
+          			if site == nil {
+          				continue
+          			}
+          
+          			category := normalizeName(site.CountryCode)
+          			if !selectedCategories[category] {
+          				continue
+          			}
+          
+          			matched[source][category] = true
+          			sourceCategoryCount++
+          
+          			for _, domain := range site.Domain {
+          				if domain == nil {
+          					continue
+          				}
+          
+          				sourceDomainCount++
+          
+          				switch domain.Type {
+          				case router.Domain_RootDomain:
+          					// Already covers all subdomains.
+          				case router.Domain_Full:
+          					// Convert exact-match Full into RootDomain so the
+          					// resulting rule also covers every subdomain.
+          					convertedFullToRootCount++
+          				default:
+          					removedUnsupportedTypeCount++
+          					continue
+          				}
+          
+          				value := normalizeName(domain.Value)
+          				if value == "" {
+          					continue
+          				}
+          
+          				// Все .ru/.su/.рф правила схлопываются в три
+          				// компактных RootDomain ниже.
+          				if isRussianTLD(value) {
+          					removedRussianDomainCount++
+          					continue
+          				}
+          
+          				copied := cloneDomain(domain)
+          				copied.Type = router.Domain_RootDomain
+          				copied.Value = value
+          
+          				// После Full -> RootDomain дедупликация использует
+          				// единую семантику RootDomain.
+          				key := domainKey(copied)
+          				if globalSeen[key] {
+          					duplicateDomainCount++
+          					continue
+          				}
+          
+          				globalSeen[key] = true
+          				ruCategory.Domain = append(ruCategory.Domain, copied)
+          				writtenDomainCount++
+          			}
+          		}
+          	}
+          
+          	for _, source := range []string{"hydra", "grimbird", "mvrvntn", "yularzhi"} {
+          		for category := range manifest[source] {
+          			if !matched[source][category] {
+          				fmt.Printf(
+          					"WARNING: requested external category %s|%s was not found in source DAT\n",
+          					source,
+          					category,
+          				)
+          				missingExternalCount++
+          			}
+          		}
+          	}
+          
+          	if missingExternalCount > 0 {
+          		panic(fmt.Sprintf(
+          			"required external categories missing: %d",
+          			missingExternalCount,
+          		))
+          	}
+          
+          	for _, value := range []string{"ru", "xn--p1ai", "su"} {
+          		key := fmt.Sprintf("%d|%s", router.Domain_RootDomain, value)
+          		if !globalSeen[key] {
+          			globalSeen[key] = true
+          			ruCategory.Domain = append(ruCategory.Domain, &router.Domain{
+          				Type:  router.Domain_RootDomain,
+          				Value: value,
+          			})
+          			writtenDomainCount++
+          		}
+          	}
+          
+          	var pruned int
+          	ruCategory.Domain, pruned = pruneCoveredRootDomains(ruCategory.Domain)
+          	removedCoveredDomainCount += pruned
+          
+          	sort.Slice(ruCategory.Domain, func(i, j int) bool {
+          		a := ruCategory.Domain[i]
+          		b := ruCategory.Domain[j]
+          		if a.Type != b.Type {
+          			return a.Type < b.Type
+          		}
+          		return normalizeName(a.Value) < normalizeName(b.Value)
+          	})
+          
+          	if len(ruCategory.Domain) == 0 {
+          		panic("RU category is empty")
+          	}
+          
+          	result.Entry = append(result.Entry, ruCategory)
+          
+          // ----------------------------------------------------------
+          // Финальная сериализация: итоговый DAT содержит только одну
+          // объединённую категорию RU.
+          // ----------------------------------------------------------
+          	outputData, err := proto.MarshalOptions{Deterministic: true}.Marshal(result)
+          	if err != nil {
+          		panic(fmt.Errorf("failed to marshal final output DAT: %w", err))
+          	}
+          
+          	if err := os.WriteFile(os.Args[7], outputData, 0644); err != nil {
+          		panic(fmt.Errorf("failed to write output DAT: %w", err))
+          	}
+          
+          	fmt.Println()
+          	fmt.Println("========================================")
+          	fmt.Println("RU LIGHT GEOSITE BUILD")
+          	fmt.Println("========================================")
+          	fmt.Printf("Source category matches : %d\n", sourceCategoryCount)
+          	fmt.Printf("Source domain rules     : %d\n", sourceDomainCount)
+          	fmt.Printf("Written domain rules    : %d\n", writtenDomainCount)
+          	fmt.Printf("Removed RU TLD rules    : %d\n", removedRussianDomainCount)
+          	fmt.Printf("Removed regex/keyword   : %d\n", removedUnsupportedTypeCount)
+          	fmt.Printf("Removed duplicates      : %d\n", duplicateDomainCount)
+          	fmt.Printf("Full -> RootDomain (RU): %d\n", convertedFullToRootCount)
+          	fmt.Printf("Covered RU domains removed: %d\n", removedCoveredDomainCount)
+          	fmt.Printf("Final categories        : %d\n", len(result.Entry))
+          	fmt.Printf("Final DAT size          : %d bytes\n", len(outputData))
+          	fmt.Println("Output categories       : RU only")
+          }
+          EOF
+
+          cd domain-list-community
+
+          echo "=== Building RU filter ==="
+
+          go build \
+            -o /tmp/ru-geosite-filter \
+            ./tools/ru-geosite-filter
+
+          echo "Filter compiled successfully."
+
+      # ------------------------------------------------------------
+      # 7. Generate final lightweight geosite_RU.dat (RU only)
+      # ------------------------------------------------------------
+      - name: Build lightweight geosite_RU.dat
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          /tmp/ru-geosite-filter \
+            "$INPUT_FILE" \
+            "$HYDRA_INPUT_FILE" \
+            "$GRIMBIRD_INPUT_FILE" \
+            "$MVR_INPUT_FILE" \
+            "$YULARZHI_INPUT_FILE" \
+            selected_ru_categories.txt \
+            "$OUTPUT_FILE"
+
+          test -s "$OUTPUT_FILE"
+
+          echo
+          echo "========================================"
+          echo "OUTPUT"
+          echo "========================================"
+
+          ls -lh "$OUTPUT_FILE"
+
+      # ------------------------------------------------------------
+      # 8. Calculate checksum
+      # ------------------------------------------------------------
+      - name: Generate SHA256
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sha256sum "$OUTPUT_FILE" \
+            | tee "$OUTPUT_SHA_FILE"
+
+      # ------------------------------------------------------------
+      # 9. Final validation
+      # ------------------------------------------------------------
+      - name: Validate final DAT
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd domain-list-community
+
+          cat > tools/ru-geosite-filter/validate.go <<'EOF'
+          package main
+
+          import (
+          	"fmt"
+          	"os"
+          	"strings"
+
+          	router "github.com/v2fly/v2ray-core/v5/app/router/routercommon"
+          	"google.golang.org/protobuf/proto"
+          )
+
+          func isRussianTLD(value string) bool {
+          	value = strings.ToLower(strings.TrimSpace(value))
+          	value = strings.TrimSuffix(value, ".")
+          	value = strings.TrimPrefix(value, ".")
+
+          	switch value {
+          	case "ru", "su", "xn--p1ai", "рф":
+          		return true
+          	}
+
+          	return strings.HasSuffix(value, ".ru") ||
+          		strings.HasSuffix(value, ".su") ||
+          		strings.HasSuffix(value, ".xn--p1ai") ||
+          		strings.HasSuffix(value, ".рф")
+          }
+
+          func domainKey(domain *router.Domain) string {
+          	return fmt.Sprintf(
+          		"%d|%s",
+          		domain.Type,
+          		strings.ToLower(strings.TrimSpace(domain.Value)),
+          	)
+          }
+
+          func main() {
+          	if len(os.Args) != 2 {
+          		os.Exit(2)
+          	}
+
+          	data, err := os.ReadFile(os.Args[1])
+          	if err != nil {
+          		panic(err)
+          	}
+
+          	list := new(router.GeoSiteList)
+          	if err := proto.Unmarshal(data, list); err != nil {
+          		panic(fmt.Errorf("invalid geosite protobuf: %w", err))
+          	}
+
+          	if len(list.Entry) != 1 {
+          		panic(fmt.Sprintf(
+          			"expected exactly 1 category (RU), got %d",
+          			len(list.Entry),
+          		))
+          	}
+
+          	ru := list.Entry[0]
+          	if ru == nil || strings.ToLower(strings.TrimSpace(ru.CountryCode)) != "ru" {
+          		panic("the only output category must be RU")
+          	}
+
+          	seen := make(map[string]bool, len(ru.Domain))
+          	roots := make(map[string]bool, len(ru.Domain))
+          	expectedTLD := map[string]bool{
+          		"ru":       false,
+          		"xn--p1ai": false,
+          		"su":       false,
+          	}
+
+          	for _, domain := range ru.Domain {
+          		if domain == nil {
+          			panic("RU contains nil domain")
+          		}
+
+          		if domain.Type != router.Domain_RootDomain {
+          			panic(fmt.Sprintf(
+          				"RU contains non-RootDomain rule: %v",
+          				domain.Type,
+          			))
+          		}
+
+          		value := strings.ToLower(strings.TrimSpace(domain.Value))
+          		if value == "" {
+          			panic("RU contains empty domain value")
+          		}
+
+          		key := domainKey(domain)
+          		if seen[key] {
+          			panic(fmt.Sprintf("duplicate domain in RU: %s", domain.Value))
+          		}
+          		seen[key] = true
+          		roots[value] = true
+
+          		if _, ok := expectedTLD[value]; ok {
+          			expectedTLD[value] = true
+          		}
+
+          		if isRussianTLD(value) &&
+          			value != "ru" && value != "su" && value != "xn--p1ai" {
+          			panic(fmt.Sprintf("Russian TLD leaked into RU: %s", domain.Value))
+          		}
+          }
+
+          	// Все RootDomain уже должны быть минимальным покрывающим набором:
+          	// дочерний домен не должен существовать, если родитель уже есть.
+          	for value := range roots {
+          		for parent := value; ; {
+          			dot := strings.IndexByte(parent, '.')
+          			if dot < 0 {
+          				break
+          			}
+          			parent = parent[dot+1:]
+          			if roots[parent] {
+          				panic(fmt.Sprintf(
+          					"redundant child domain in RU: %s is covered by %s",
+          					value,
+          					parent,
+          				))
+          			}
+          		}
+          	}
+
+          	for name, ok := range expectedTLD {
+          		if !ok {
+          			panic(fmt.Sprintf("RU missing compact TLD: %s", name))
+          		}
+          	}
+
+          	fmt.Println()
+          	fmt.Println("========================================")
+          	fmt.Println("VALIDATION OK")
+          	fmt.Println("========================================")
+          	fmt.Println("Categories: 1 (RU only)")
+          	fmt.Printf("RU rules:  %d\n", len(ru.Domain))
+          	fmt.Println("Private categories: excluded")
+          	fmt.Println("Post-RU appended categories: none")
+          	fmt.Println("RU duplicates: none")
+          	fmt.Println("RU rules: RootDomain only; Full -> RootDomain")
+          	fmt.Println("RU compact TLDs: ru, xn--p1ai, su")
+          	fmt.Println("RU redundant child domains: none")
+          }
+          EOF
+
+          go run \
+            ./tools/ru-geosite-filter/validate.go \
+            "$GITHUB_WORKSPACE/$OUTPUT_FILE"
+
+      # ------------------------------------------------------------
+      # 10. Publish GitHub Release
+      # ------------------------------------------------------------
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-optimized
+          name: "Optimized RU GeoSite"
+          make_latest: true
+
+          files: |
+            geosite_RU.dat
+            geosite_RU.dat.sha256sum
+            geosite_RU_categories.txt
+
+          body: |
+            # Optimized RU GeoSite
+
+            Automatically generated Russian-region GeoSite database.
+
+            ## Sources
+
+            - `runetfreedom/russia-blocked-geosite`
+            - `hydraponique/roscomvpn-geosite`
+            - `GrimbirdUsers/ru-routing-dat`
+            - `mvrvntn/routing` (`category-ru` merged into RU)
+            - `Yularzhi/geosite_russia` (`category-ru` merged into RU)
+
+            ## Selection
+
+            The selected categories from runetfreedom, Hydra, Grimbird, mvrvntn, and Yularzhi are merged into a single `RU` category. Private categories are excluded, and nothing is appended after RU.
+
+            Hydra categories merged into RU:
+            - `whitelist`
+            - `category-ru`
+
+            Grimbird categories:
+            - `category-ru-whitelist`
+            - `ozon`
+            - `ru-analytics`
+            - `ru-cdn`
+            - `ru-finance`
+            - `ru-medical`
+            - `ru-retail-extra`
+            - `ru-transport`
+            - `ru-tv`
+            - `ru-whitelist-extended`
+            - `swift`
+
+            mvrvntn category merged into RU:
+            - `category-ru`
+
+            Yularzhi category merged into RU:
+            - `category-ru`
+
+            The runetfreedom/v2fly side continues to include the recursive `category-ru`, all current `*-ru` lists,
+            `ru-available-only-inside`, and the additional Russian service/company lists.
+
+            ## Filtering
+
+            Before the final merge, the following Russian zones are removed from source categories:
+
+            - `.ru`
+            - `.su`
+            - `.xn--p1ai`
+            - `.рф`
+
+            Regex and keyword rules are removed to reduce size. Only domain rules are retained; `Full` rules are converted to `RootDomain` so they cover all subdomains.
+
+            ## Deduplication
+
+            All retained `Full` rules are converted to `RootDomain`. Duplicate rules are removed globally, and redundant child `RootDomain` entries are removed when a parent domain already covers them.
+
+            ## Compact Russian TLDs
+
+            The single generated `RU` category contains these compact rules:
+
+            `domain:ru`
+            `domain:xn--p1ai`
+            `domain:su`
+
+            ## Usage
+
+            `ext:geosite_RU.dat:RU`
+
+            The resulting DAT contains only the `RU` category.
+
+            There is no separate `TLD-RU` category and no post-RU categories.
+
+            `geosite_RU_categories.txt` contains the source category manifest merged into RU.
+            
+          fail_on_unmatched_files: true
+
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ------------------------------------------------------------
+      # 11. Also publish files to release branch and purge jsDelivr cache
+      # ------------------------------------------------------------
+      - name: Publish files to release branch
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf /tmp/geosite-release
+          mkdir -p /tmp/geosite-release
+
+          cp "$OUTPUT_FILE" \
+            /tmp/geosite-release/geosite_RU.dat
+
+          cp "$OUTPUT_SHA_FILE" \
+            /tmp/geosite-release/geosite_RU.dat.sha256sum
+
+          cp "$CATEGORY_FILE" \
+            /tmp/geosite-release/geosite_RU_categories.txt
+
+          cd /tmp/geosite-release
+
+          git init
+          git checkout -b release
+
+          git config user.name \
+            "github-actions[bot]"
+
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add .
+
+          git commit \
+            -m "Update optimized RU GeoSite"
+
+          git remote add origin \
+            "https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
+
+          git push \
+            --force \
+            origin \
+            release
+
+          echo "Purging jsDelivr CDN cache..."
+          curl -s "https://purge.jsdelivr.net/gh/${{ github.repository }}@release/geosite_RU.dat" > /dev/null || true
+          curl -s "https://purge.jsdelivr.net/gh/${{ github.repository }}@release/geosite_RU.dat.sha256sum" > /dev/null || true
+          echo "jsDelivr CDN cache purged."
+
+      # ------------------------------------------------------------
+      # 12. Workflow summary
+      # ------------------------------------------------------------
+      - name: Print download URLs
+        shell: bash
+        run: |
+          echo
+          echo "========================================"
+          echo "DOWNLOAD URLS"
+          echo "========================================"
+          echo
+          echo "GitHub Release:"
+          echo "https://github.com/${{ github.repository }}/releases/download/latest-optimized/geosite_RU.dat"
+          echo
+          echo "Raw release branch:"
+          echo "https://raw.githubusercontent.com/${{ github.repository }}/release/geosite_RU.dat"
+          echo
+          echo "jsDelivr CDN:"
+          echo "https://cdn.jsdelivr.net/gh/${{ github.repository }}@release/geosite_RU.dat"
+          echo
+          echo "SHA256:"
+          cat "$OUTPUT_SHA_FILE"
