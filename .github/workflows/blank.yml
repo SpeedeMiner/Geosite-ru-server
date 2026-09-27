@@ -859,6 +859,10 @@ jobs:
             "$GRIMBIRD_INPUT_FILE" \
             "$MVR_INPUT_FILE" \
             "$YULARZHI_INPUT_FILE" \
+            "$VPNYASHA_INPUT_FILE" \
+            "$KIRILL_INPUT_FILE" \
+            "$DIGNE_INPUT_FILE" \
+            "$DAVOYAN_LEGACY_INPUT_FILE" \
             selected_ru_categories.txt \
             "$OUTPUT_FILE"
 
