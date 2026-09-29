@@ -372,438 +372,437 @@ jobs:
           package main
 
           import (
-          	"bufio"
-          	"fmt"
-          	"os"
-          	"sort"
-          	"strings"
+              "bufio"
+              "fmt"
+              "os"
+              "sort"
+              "strings"
 
-          	router "github.com/v2fly/v2ray-core/v5/app/router/routercommon"
-          	"google.golang.org/protobuf/proto"
+              router "github.com/v2fly/v2ray-core/v5/app/router/routercommon"
+              "google.golang.org/protobuf/proto"
           )
 
           func normalizeName(value string) string {
-          	return strings.ToLower(strings.TrimSpace(value))
+              return strings.ToLower(strings.TrimSpace(value))
           }
 
           func isRussianTLD(value string) bool {
-          	value = normalizeName(value)
-          	value = strings.TrimSuffix(value, ".")
-          	value = strings.TrimPrefix(value, ".")
+              value = normalizeName(value)
+              value = strings.TrimSuffix(value, ".")
+              value = strings.TrimPrefix(value, ".")
 
-          	switch value {
-          	case "ru", "su", "xn--p1ai", "рф":
-          		return true
-          	}
+              switch value {
+              case "ru", "su", "xn--p1ai", "рф":
+                  return true
+              }
 
-          	return strings.HasSuffix(value, ".ru") ||
-          		strings.HasSuffix(value, ".su") ||
-          		strings.HasSuffix(value, ".xn--p1ai") ||
-          		strings.HasSuffix(value, ".рф")
+              return strings.HasSuffix(value, ".ru") ||
+                  strings.HasSuffix(value, ".su") ||
+                  strings.HasSuffix(value, ".xn--p1ai") ||
+                  strings.HasSuffix(value, ".рф")
           }
 
           func domainKey(domain *router.Domain) string {
-          	return fmt.Sprintf("%d|%s", domain.Type, normalizeName(domain.Value))
+              return fmt.Sprintf("%d|%s", domain.Type, normalizeName(domain.Value))
           }
 
           func pruneCoveredRootDomains(domains []*router.Domain) ([]*router.Domain, int) {
-          	roots := make(map[string]bool)
-          	for _, domain := range domains {
-          		if domain == nil || domain.Type != router.Domain_RootDomain {
-          			continue
-          		}
-          		value := normalizeName(domain.Value)
-          		if value != "" {
-          			roots[value] = true
-          		}
-          	}
+              roots := make(map[string]bool)
+              for _, domain := range domains {
+                  if domain == nil || domain.Type != router.Domain_RootDomain {
+                      continue
+                  }
+                  value := normalizeName(domain.Value)
+                  if value != "" {
+                      roots[value] = true
+                  }
+              }
 
-          	result := make([]*router.Domain, 0, len(domains))
-          	removed := 0
-          	for _, domain := range domains {
-          		if domain == nil || domain.Type != router.Domain_RootDomain {
-          			result = append(result, domain)
-          			continue
-          		}
+              result := make([]*router.Domain, 0, len(domains))
+              removed := 0
+              for _, domain := range domains {
+                  if domain == nil || domain.Type != router.Domain_RootDomain {
+                      result = append(result, domain)
+                      continue
+                  }
 
-          		value := normalizeName(domain.Value)
-          		covered := false
-          		for parent := value; ; {
-          			dot := strings.IndexByte(parent, '.')
-          			if dot < 0 {
-				break
-          			}
-          			parent = parent[dot+1:]
-          			if roots[parent] {
-          				covered = true
-          				break
-          			}
-          		}
+                  value := normalizeName(domain.Value)
+                  covered := false
+                  for parent := value; ; {
+                      dot := strings.IndexByte(parent, '.')
+                      if dot < 0 {
+                          break
+                      }
+                      parent = parent[dot+1:]
+                      if roots[parent] {
+                          covered = true
+                          break
+                      }
+                  }
 
-          		if covered {
-          			removed++
-          			continue
-          		}
-          		result = append(result, domain)
-          	}
-          	return result, removed
+                  if covered {
+                      removed++
+                      continue
+                  }
+                  result = append(result, domain)
+              }
+              return result, removed
           }
 
           func loadGeoSite(path string) (*router.GeoSiteList, error) {
-          	data, err := os.ReadFile(path)
-          	if err != nil {
-          		return nil, err
-          	}
+              data, err := os.ReadFile(path)
+              if err != nil {
+                  return nil, err
+              }
 
-          	list := new(router.GeoSiteList)
-          	if err := proto.Unmarshal(data, list); err != nil {
-          		return nil, fmt.Errorf("invalid geosite %s: %w", path, err)
-          	}
+              list := new(router.GeoSiteList)
+              if err := proto.Unmarshal(data, list); err != nil {
+                  return nil, fmt.Errorf("invalid geosite %s: %w", path, err)
+              }
 
-          	return list, nil
+              return list, nil
           }
 
           func loadManifest(path string) (map[string]map[string]bool, error) {
-          	file, err := os.Open(path)
-          	if err != nil {
-          		return nil, err
-          	}
-          	defer file.Close()
+              file, err := os.Open(path)
+              if err != nil {
+                  return nil, err
+              }
+              defer file.Close()
 
-          	result := make(map[string]map[string]bool)
-          	scanner := bufio.NewScanner(file)
+              result := make(map[string]map[string]bool)
+              scanner := bufio.NewScanner(file)
 
-          	for scanner.Scan() {
-          		line := strings.TrimSpace(scanner.Text())
-          		if line == "" || strings.HasPrefix(line, "#") {
-          			continue
-          		}
+              for scanner.Scan() {
+                  line := strings.TrimSpace(scanner.Text())
+                  if line == "" || strings.HasPrefix(line, "#") {
+                      continue
+                  }
 
-          		parts := strings.SplitN(line, "|", 2)
-          		if len(parts) != 2 {
-          			return nil, fmt.Errorf("invalid manifest entry: %q", line)
-          		}
+                  parts := strings.SplitN(line, "|", 2)
+                  if len(parts) != 2 {
+                      return nil, fmt.Errorf("invalid manifest entry: %q", line)
+                  }
 
-          		source := normalizeName(parts[0])
-          		category := normalizeName(parts[1])
-          		if source == "" || category == "" {
-          			return nil, fmt.Errorf("invalid manifest entry: %q", line)
-          		}
+                  source := normalizeName(parts[0])
+                  category := normalizeName(parts[1])
+                  if source == "" || category == "" {
+                      return nil, fmt.Errorf("invalid manifest entry: %q", line)
+                  }
 
-          		if result[source] == nil {
-          			result[source] = make(map[string]bool)
-          		}
-          		result[source][category] = true
-          	}
+                  if result[source] == nil {
+                      result[source] = make(map[string]bool)
+                  }
+                  result[source][category] = true
+              }
 
-          	if err := scanner.Err(); err != nil {
-          		return nil, err
-          	}
+              if err := scanner.Err(); err != nil {
+                  return nil, err
+              }
 
-          	return result, nil
+              return result, nil
           }
 
           func loadLegacyDomains(path string) ([]string, error) {
-          	file, err := os.Open(path)
-          	if err != nil {
-          		return nil, err
-          	}
-          	defer file.Close()
+              file, err := os.Open(path)
+              if err != nil {
+                  return nil, err
+              }
+              defer file.Close()
 
-          	var domains []string
-          	seen := make(map[string]bool)
-          	scanner := bufio.NewScanner(file)
+              var domains []string
+              seen := make(map[string]bool)
+              scanner := bufio.NewScanner(file)
 
-          	for scanner.Scan() {
-          		line := strings.TrimSpace(strings.TrimPrefix(scanner.Text(), "\ufeff"))
-          		if line == "" || strings.HasPrefix(line, "#") {
-          			continue
-          		}
-          		if idx := strings.IndexByte(line, '#'); idx >= 0 {
-          			line = strings.TrimSpace(line[:idx])
-          		}
-          		if line == "" {
-          			continue
-          		}
+              for scanner.Scan() {
+                  line := strings.TrimSpace(strings.TrimPrefix(scanner.Text(), "\ufeff"))
+                  if line == "" || strings.HasPrefix(line, "#") {
+                      continue
+                  }
+                  if idx := strings.IndexByte(line, '#'); idx >= 0 {
+                      line = strings.TrimSpace(line[:idx])
+                  }
+                  if line == "" {
+                      continue
+                  }
 
-          		upper := strings.ToUpper(line)
-          		for _, prefix := range []string{"DOMAIN-SUFFIX,", "DOMAIN-FULL,", "DOMAIN,"} {
-          			if strings.HasPrefix(upper, prefix) {
-          				line = strings.TrimSpace(line[len(prefix):])
-          				break
-          			}
-          		}
-          		for _, prefix := range []string{"DOMAIN-KEYWORD,", "DOMAIN-REGEX,", "DOMAIN-WILDCARD,"} {
-          			if strings.HasPrefix(upper, prefix) {
-          				line = ""
-          				break
-          			}
-          		}
-          		if line == "" {
-          			continue
-          		}
+                  upper := strings.ToUpper(line)
+                  for _, prefix := range []string{"DOMAIN-SUFFIX,", "DOMAIN-FULL,", "DOMAIN,"} {
+                      if strings.HasPrefix(upper, prefix) {
+                          line = strings.TrimSpace(line[len(prefix):])
+                          break
+                      }
+                  }
+                  for _, prefix := range []string{"DOMAIN-KEYWORD,", "DOMAIN-REGEX,", "DOMAIN-WILDCARD,"} {
+                      if strings.HasPrefix(upper, prefix) {
+                          line = ""
+                          break
+                      }
+                  }
+                  if line == "" {
+                      continue
+                  }
 
-          		for _, prefix := range []string{"domain:", "full:"} {
-          			if strings.HasPrefix(strings.ToLower(line), prefix) {
-          				line = strings.TrimSpace(line[len(prefix):])
-          				break
-          			}
-          		}
+                  for _, prefix := range []string{"domain:", "full:"} {
+                      if strings.HasPrefix(strings.ToLower(line), prefix) {
+                          line = strings.TrimSpace(line[len(prefix):])
+                          break
+                      }
+                  }
 
-          		line = strings.TrimSpace(strings.TrimPrefix(line, "-"))
-          		line = strings.TrimPrefix(line, "*.")
-          		line = normalizeName(line)
-          		line = strings.TrimSuffix(line, ".")
+                  line = strings.TrimSpace(strings.TrimPrefix(line, "-"))
+                  line = strings.TrimPrefix(line, "*.")
+                  line = normalizeName(line)
+                  line = strings.TrimSuffix(line, ".")
 
-          		if line == "" || strings.ContainsAny(line, " \t:/\\[](){}|$") {
-          			continue
-          		}
+                  if line == "" || strings.ContainsAny(line, " \t:/\\[](){}|$") {
+                      continue
+                  }
 
-          		allNumeric := true
-          		for _, ch := range line {
-          			if (ch < '0' || ch > '9') && ch != '.' {
-          				allNumeric = false
-          				break
-          			}
-          		}
-          		if allNumeric {
-          			continue
-          		}
+                  allNumeric := true
+                  for _, ch := range line {
+                      if (ch < '0' || ch > '9') && ch != '.' {
+                          allNumeric = false
+                          break
+                      }
+                  }
+                  if allNumeric {
+                      continue
+                  }
 
-          		if seen[line] {
-          			continue
-          		}
-          		seen[line] = true
-          		domains = append(domains, line)
-          	}
+                  if seen[line] {
+                      continue
+                  }
+                  seen[line] = true
+                  domains = append(domains, line)
+              }
 
-          	if err := scanner.Err(); err != nil {
-          		return nil, err
-          	}
-          	if len(domains) == 0 {
-          		return nil, fmt.Errorf("Davoyan legacy domain list is empty")
-          	}
-          	return domains, nil
+              if err := scanner.Err(); err != nil {
+                  return nil, err
+              }
+              if len(domains) == 0 {
+                  return nil, fmt.Errorf("Davoyan legacy domain list is empty")
+              }
+              return domains, nil
           }
 
           func main() {
-          	if len(os.Args) != 12 {
-          		fmt.Fprintf(
-          			os.Stderr,
-          			"usage: %s runetfreedom.dat hydra.dat grimbird.dat mvrvntn.dat yularzhi.dat vpnyasha.dat kirill.dat digne.dat davoyan-legacy.txt selected.txt output.dat\n",
-          			os.Args[0],
-          		)
-          		os.Exit(2)
-          	}
+              if len(os.Args) != 12 {
+                  fmt.Fprintf(
+                      os.Stderr,
+                      "usage: %s runetfreedom.dat hydra.dat grimbird.dat mvrvntn.dat yularzhi.dat vpnyasha.dat kirill.dat digne.dat davoyan-legacy.txt selected.txt output.dat\n",
+                      os.Args[0],
+                  )
+                  os.Exit(2)
+              }
 
-          	sources := map[string]string{
-          		"runetfreedom": os.Args[1],
-          		"hydra":        os.Args[2],
-          		"grimbird":     os.Args[3],
-          		"mvrvntn":      os.Args[4],
-          		"yularzhi":     os.Args[5],
-          		"vpnyasha":     os.Args[6],
-          		"kirill":       os.Args[7],
-          		"digne":        os.Args[8],
-          	}
+              sources := map[string]string{
+                  "runetfreedom": os.Args[1],
+                  "hydra":        os.Args[2],
+                  "grimbird":     os.Args[3],
+                  "mvrvntn":      os.Args[4],
+                  "yularzhi":     os.Args[5],
+                  "vpnyasha":     os.Args[6],
+                  "kirill":       os.Args[7],
+                  "digne":        os.Args[8],
+              }
 
-          	legacyDomains, err := loadLegacyDomains(os.Args[9])
-          	if err != nil {
-          		panic(fmt.Errorf("failed to read Davoyan legacy list: %w", err))
-          	}
+              legacyDomains, err := loadLegacyDomains(os.Args[9])
+              if err != nil {
+                  panic(fmt.Errorf("failed to read Davoyan legacy list: %w", err))
+              }
 
-          	manifest, err := loadManifest(os.Args[10])
-          	if err != nil {
-          		panic(fmt.Errorf("failed to read manifest: %w", err))
-          	}
+              manifest, err := loadManifest(os.Args[10])
+              if err != nil {
+                  panic(fmt.Errorf("failed to read manifest: %w", err))
+              }
 
-          	lists := make(map[string]*router.GeoSiteList)
-          	for source, path := range sources {
-          		list, err := loadGeoSite(path)
-          		if err != nil {
-          			panic(err)
-          		}
-          		lists[source] = list
-          	}
+              lists := make(map[string]*router.GeoSiteList)
+              for source, path := range sources {
+                  list, err := loadGeoSite(path)
+                  if err != nil {
+                      panic(err)
+                  }
+                  lists[source] = list
+              }
 
-          	result := new(router.GeoSiteList)
-          	ruCategory := &router.GeoSite{CountryCode: "RU"}
-          	globalSeen := make(map[string]bool)
+              result := new(router.GeoSiteList)
+              ruCategory := &router.GeoSite{CountryCode: "RU"}
+              globalSeen := make(map[string]bool)
 
-          	sourceCategoryCount := 0
-          	sourceDomainCount := 0
-          	writtenDomainCount := 0
-          	duplicateDomainCount := 0
-          	removedRussianDomainCount := 0
-          	removedUnsupportedTypeCount := 0
-          	convertedFullToRootCount := 0
-          	removedCoveredDomainCount := 0
-          	missingExternalCount := 0
+              sourceCategoryCount := 0
+              sourceDomainCount := 0
+              writtenDomainCount := 0
+              duplicateDomainCount := 0
+              removedRussianDomainCount := 0
+              removedUnsupportedTypeCount := 0
+              convertedFullToRootCount := 0
+              removedCoveredDomainCount := 0
+              missingExternalCount := 0
 
-          	matched := make(map[string]map[string]bool)
-          	for source := range sources {
-          		matched[source] = make(map[string]bool)
-          	}
+              matched := make(map[string]map[string]bool)
+              for source := range sources {
+                  matched[source] = make(map[string]bool)
+              }
 
-          	for source, selectedCategories := range manifest {
-          		list, ok := lists[source]
-          		if !ok {
-          			panic(fmt.Sprintf("unknown source in manifest: %s", source))
-          		}
+              for source, selectedCategories := range manifest {
+                  list, ok := lists[source]
+                  if !ok {
+                      panic(fmt.Sprintf("unknown source in manifest: %s", source))
+                  }
 
-          		for _, site := range list.Entry {
-          			if site == nil {
-          				continue
-          			}
+                  for _, site := range list.Entry {
+                      if site == nil {
+                          continue
+                      }
 
-          			category := normalizeName(site.CountryCode)
-          			if !selectedCategories[category] {
-          				continue
-          			}
+                      category := normalizeName(site.CountryCode)
+                      if !selectedCategories[category] {
+                          continue
+                      }
 
-          			matched[source][category] = true
-          			sourceCategoryCount++
+                      matched[source][category] = true
+                      sourceCategoryCount++
 
-          			for _, domain := range site.Domain {
-          				if domain == nil {
-          					continue
-          				}
+                      for _, domain := range site.Domain {
+                          if domain == nil {
+                              continue
+                          }
 
-          				sourceDomainCount++
+                          sourceDomainCount++
 
-          				switch domain.Type {
-          				case router.Domain_RootDomain:
-          				case router.Domain_Full:
-          					convertedFullToRootCount++
-          				default:
-          					removedUnsupportedTypeCount++
-          					continue
-          				}
+                          switch domain.Type {
+                          case router.Domain_RootDomain:
+                          case router.Domain_Full:
+                              convertedFullToRootCount++
+                          default:
+                              removedUnsupportedTypeCount++
+                              continue
+                          }
 
-          				value := normalizeName(domain.Value)
-          				if value == "" {
-          					continue
-          				}
+                          value := normalizeName(domain.Value)
+                          if value == "" {
+                              continue
+                          }
 
-          				if isRussianTLD(value) {
-          					removedRussianDomainCount++
-          					continue
-          				}
+                          if isRussianTLD(value) {
+                              removedRussianDomainCount++
+                              continue
+                          }
 
-          				// Создаём чистую запись без атрибутов
-          				cleaned := &router.Domain{
-          					Type:  router.Domain_RootDomain,
-          					Value: value,
-          				}
+                          cleaned := &router.Domain{
+                              Type:  router.Domain_RootDomain,
+                              Value: value,
+                          }
 
-          				key := domainKey(cleaned)
-          				if globalSeen[key] {
-          					duplicateDomainCount++
-          					continue
-          				}
+                          key := domainKey(cleaned)
+                          if globalSeen[key] {
+                              duplicateDomainCount++
+                              continue
+                          }
 
-          				globalSeen[key] = true
-          				ruCategory.Domain = append(ruCategory.Domain, cleaned)
-          				writtenDomainCount++
-          			}
-          		}
-          	}
+                          globalSeen[key] = true
+                          ruCategory.Domain = append(ruCategory.Domain, cleaned)
+                          writtenDomainCount++
+                      }
+                  }
+              }
 
-          	for _, source := range []string{"hydra", "grimbird", "mvrvntn", "yularzhi", "vpnyasha", "kirill", "digne"} {
-          		for category := range manifest[source] {
-          			if !matched[source][category] {
-          				fmt.Printf(
-          					"WARNING: requested external category %s|%s was not found in source DAT\n",
-          					source,
-          					category,
-          				)
-          				missingExternalCount++
-          			}
-          		}
-          	}
+              for _, source := range []string{"hydra", "grimbird", "mvrvntn", "yularzhi", "vpnyasha", "kirill", "digne"} {
+                  for category := range manifest[source] {
+                      if !matched[source][category] {
+                          fmt.Printf(
+                              "WARNING: requested external category %s|%s was not found in source DAT\n",
+                              source,
+                              category,
+                          )
+                          missingExternalCount++
+                      }
+                  }
+              }
 
-          	if missingExternalCount > 0 {
-          		panic(fmt.Sprintf(
-          			"required external categories missing: %d",
-          			missingExternalCount,
-          		))
-          	}
+              if missingExternalCount > 0 {
+                  panic(fmt.Sprintf(
+                      "required external categories missing: %d",
+                      missingExternalCount,
+                  ))
+              }
 
-          	for _, value := range legacyDomains {
-          		if isRussianTLD(value) {
-          			removedRussianDomainCount++
-          			continue
-          		}
+              for _, value := range legacyDomains {
+                  if isRussianTLD(value) {
+                      removedRussianDomainCount++
+                      continue
+                  }
 
-          		cleaned := &router.Domain{
-          			Type:  router.Domain_RootDomain,
-          			Value: normalizeName(value),
-          		}
-          		key := domainKey(cleaned)
-          		if globalSeen[key] {
-          			duplicateDomainCount++
-          			continue
-          		}
-          		globalSeen[key] = true
-          		ruCategory.Domain = append(ruCategory.Domain, cleaned)
-          		writtenDomainCount++
-          	}
+                  cleaned := &router.Domain{
+                      Type:  router.Domain_RootDomain,
+                      Value: normalizeName(value),
+                  }
+                  key := domainKey(cleaned)
+                  if globalSeen[key] {
+                      duplicateDomainCount++
+                      continue
+                  }
+                  globalSeen[key] = true
+                  ruCategory.Domain = append(ruCategory.Domain, cleaned)
+                  writtenDomainCount++
+              }
 
-          	for _, value := range []string{"ru", "xn--p1ai", "su"} {
-          		key := fmt.Sprintf("%d|%s", router.Domain_RootDomain, value)
-          		if !globalSeen[key] {
-          			globalSeen[key] = true
-          			ruCategory.Domain = append(ruCategory.Domain, &router.Domain{
-          				Type:  router.Domain_RootDomain,
-          				Value: value,
-          			})
-          			writtenDomainCount++
-          		}
-          	}
+              for _, value := range []string{"ru", "xn--p1ai", "su"} {
+                  key := fmt.Sprintf("%d|%s", router.Domain_RootDomain, value)
+                  if !globalSeen[key] {
+                      globalSeen[key] = true
+                      ruCategory.Domain = append(ruCategory.Domain, &router.Domain{
+                          Type:  router.Domain_RootDomain,
+                          Value: value,
+                      })
+                      writtenDomainCount++
+                  }
+              }
 
-          	var pruned int
-          	ruCategory.Domain, pruned = pruneCoveredRootDomains(ruCategory.Domain)
-          	removedCoveredDomainCount += pruned
+              var pruned int
+              ruCategory.Domain, pruned = pruneCoveredRootDomains(ruCategory.Domain)
+              removedCoveredDomainCount += pruned
 
-          	sort.Slice(ruCategory.Domain, func(i, j int) bool {
-          		a := ruCategory.Domain[i]
-          		b := ruCategory.Domain[j]
-          		if a.Type != b.Type {
-          			return a.Type < b.Type
-          		}
-          		return normalizeName(a.Value) < normalizeName(b.Value)
-          	})
+              sort.Slice(ruCategory.Domain, func(i, j int) bool {
+                  a := ruCategory.Domain[i]
+                  b := ruCategory.Domain[j]
+                  if a.Type != b.Type {
+                      return a.Type < b.Type
+                  }
+                  return normalizeName(a.Value) < normalizeName(b.Value)
+              })
 
-          	if len(ruCategory.Domain) == 0 {
-          		panic("RU category is empty")
-          	}
+              if len(ruCategory.Domain) == 0 {
+                  panic("RU category is empty")
+              }
 
-          	result.Entry = append(result.Entry, ruCategory)
+              result.Entry = append(result.Entry, ruCategory)
 
-          	outputData, err := proto.MarshalOptions{Deterministic: true}.Marshal(result)
-          	if err != nil {
-          		panic(fmt.Errorf("failed to marshal final output DAT: %w", err))
-          	}
+              outputData, err := proto.MarshalOptions{Deterministic: true}.Marshal(result)
+              if err != nil {
+                  panic(fmt.Errorf("failed to marshal final output DAT: %w", err))
+              }
 
-          	if err := os.WriteFile(os.Args[11], outputData, 0644); err != nil {
-          		panic(fmt.Errorf("failed to write output DAT: %w", err))
-          	}
+              if err := os.WriteFile(os.Args[11], outputData, 0644); err != nil {
+                  panic(fmt.Errorf("failed to write output DAT: %w", err))
+              }
 
-          	fmt.Println()
-          	fmt.Println("========================================")
-          	fmt.Println("RU LIGHT GEOSITE BUILD")
-          	fmt.Println("========================================")
-          	fmt.Printf("Source category matches : %d\n", sourceCategoryCount)
-          	fmt.Printf("Source domain rules     : %d\n", sourceDomainCount)
-          	fmt.Printf("Written domain rules    : %d\n", writtenDomainCount)
-          	fmt.Printf("Removed RU TLD rules    : %d\n", removedRussianDomainCount)
-          	fmt.Printf("Removed regex/keyword   : %d\n", removedUnsupportedTypeCount)
-          	fmt.Printf("Removed duplicates      : %d\n", duplicateDomainCount)
-          	fmt.Printf("Full -> RootDomain (RU): %d\n", convertedFullToRootCount)
-          	fmt.Printf("Covered RU domains removed: %d\n", removedCoveredDomainCount)
-          	fmt.Printf("Final categories        : %d\n", len(result.Entry))
-          	fmt.Printf("Final DAT size          : %d bytes\n", len(outputData))
-          	fmt.Println("Output categories       : RU only (all attributes stripped)")
+              fmt.Println()
+              fmt.Println("========================================")
+              fmt.Println("RU LIGHT GEOSITE BUILD")
+              fmt.Println("========================================")
+              fmt.Printf("Source category matches : %d\n", sourceCategoryCount)
+              fmt.Printf("Source domain rules     : %d\n", sourceDomainCount)
+              fmt.Printf("Written domain rules    : %d\n", writtenDomainCount)
+              fmt.Printf("Removed RU TLD rules    : %d\n", removedRussianDomainCount)
+              fmt.Printf("Removed regex/keyword   : %d\n", removedUnsupportedTypeCount)
+              fmt.Printf("Removed duplicates      : %d\n", duplicateDomainCount)
+              fmt.Printf("Full -> RootDomain (RU): %d\n", convertedFullToRootCount)
+              fmt.Printf("Covered RU domains removed: %d\n", removedCoveredDomainCount)
+              fmt.Printf("Final categories        : %d\n", len(result.Entry))
+              fmt.Printf("Final DAT size          : %d bytes\n", len(outputData))
+              fmt.Println("Output categories       : RU only (all attributes stripped)")
           }
           EOF
 
@@ -865,142 +864,141 @@ jobs:
           package main
 
           import (
-          	"fmt"
-          	"os"
-          	"strings"
+              "fmt"
+              "os"
+              "strings"
 
-          	router "github.com/v2fly/v2ray-core/v5/app/router/routercommon"
-          	"google.golang.org/protobuf/proto"
+              router "github.com/v2fly/v2ray-core/v5/app/router/routercommon"
+              "google.golang.org/protobuf/proto"
           )
 
           func isRussianTLD(value string) bool {
-          	value = strings.ToLower(strings.TrimSpace(value))
-          	value = strings.TrimSuffix(value, ".")
-          	value = strings.TrimPrefix(value, ".")
+              value = strings.ToLower(strings.TrimSpace(value))
+              value = strings.TrimSuffix(value, ".")
+              value = strings.TrimPrefix(value, ".")
 
-          	switch value {
-          	case "ru", "su", "xn--p1ai", "рф":
-          		return true
-          	}
+              switch value {
+              case "ru", "su", "xn--p1ai", "рф":
+                  return true
+              }
 
-          	return strings.HasSuffix(value, ".ru") ||
-          		strings.HasSuffix(value, ".su") ||
-          		strings.HasSuffix(value, ".xn--p1ai") ||
-          		strings.HasSuffix(value, ".рф")
+              return strings.HasSuffix(value, ".ru") ||
+                  strings.HasSuffix(value, ".su") ||
+                  strings.HasSuffix(value, ".xn--p1ai") ||
+                  strings.HasSuffix(value, ".рф")
           }
 
           func domainKey(domain *router.Domain) string {
-          	return fmt.Sprintf(
-          		"%d|%s",
-          		domain.Type,
-          		strings.ToLower(strings.TrimSpace(domain.Value)),
-          	)
+              return fmt.Sprintf(
+                  "%d|%s",
+                  domain.Type,
+                  strings.ToLower(strings.TrimSpace(domain.Value)),
+              )
           }
 
           func main() {
-          	if len(os.Args) != 2 {
-          		os.Exit(2)
-          	}
+              if len(os.Args) != 2 {
+                  os.Exit(2)
+              }
 
-          	data, err := os.ReadFile(os.Args[1])
-          	if err != nil {
-          		panic(err)
-          	}
+              data, err := os.ReadFile(os.Args[1])
+              if err != nil {
+                  panic(err)
+              }
 
-          	list := new(router.GeoSiteList)
-          	if err := proto.Unmarshal(data, list); err != nil {
-          		panic(fmt.Errorf("invalid geosite protobuf: %w", err))
-          	}
+              list := new(router.GeoSiteList)
+              if err := proto.Unmarshal(data, list); err != nil {
+                  panic(fmt.Errorf("invalid geosite protobuf: %w", err))
+              }
 
-          	if len(list.Entry) != 1 {
-          		panic(fmt.Sprintf(
-          			"expected exactly 1 category (RU), got %d",
-          			len(list.Entry),
-          		))
-          	}
+              if len(list.Entry) != 1 {
+                  panic(fmt.Sprintf(
+                      "expected exactly 1 category (RU), got %d",
+                      len(list.Entry),
+                  ))
+              }
 
-          	ru := list.Entry[0]
-          	if ru == nil || strings.ToLower(strings.TrimSpace(ru.CountryCode)) != "ru" {
-          		panic("the only output category must be RU")
-          	}
+              ru := list.Entry[0]
+              if ru == nil || strings.ToLower(strings.TrimSpace(ru.CountryCode)) != "ru" {
+                  panic("the only output category must be RU")
+              }
 
-          	seen := make(map[string]bool, len(ru.Domain))
-          	roots := make(map[string]bool, len(ru.Domain))
-          	expectedTLD := map[string]bool{
-          		"ru":       false,
-          		"xn--p1ai": false,
-          		"su":       false,
-          	}
+              seen := make(map[string]bool, len(ru.Domain))
+              roots := make(map[string]bool, len(ru.Domain))
+              expectedTLD := map[string]bool{
+                  "ru":       false,
+                  "xn--p1ai": false,
+                  "su":       false,
+              }
 
-          	for _, domain := range ru.Domain {
-          		if domain == nil {
-          			panic("RU contains nil domain")
-          		}
+              for _, domain := range ru.Domain {
+                  if domain == nil {
+                      panic("RU contains nil domain")
+                  }
 
-          		// Строгая проверка на отсутствие @ads, @cn и прочих тегов
-          		if len(domain.Attribute) > 0 {
-          			panic(fmt.Sprintf("leaked attributes found in domain: %s (count: %d)", domain.Value, len(domain.Attribute)))
-          		}
+                  if len(domain.Attribute) > 0 {
+                      panic(fmt.Sprintf("leaked attributes found in domain: %s (count: %d)", domain.Value, len(domain.Attribute)))
+                  }
 
-          		if domain.Type != router.Domain_RootDomain {
-          			panic(fmt.Sprintf(
-          				"RU contains non-RootDomain rule: %v",
-          				domain.Type,
-          			))
-          		}
+                  if domain.Type != router.Domain_RootDomain {
+                      panic(fmt.Sprintf(
+                          "RU contains non-RootDomain rule: %v",
+                          domain.Type,
+                      ))
+                  }
 
-          		value := strings.ToLower(strings.TrimSpace(domain.Value))
-          		if value == "" {
-          			panic("RU contains empty domain value")
-          		}
+                  value := strings.ToLower(strings.TrimSpace(domain.Value))
+                  if value == "" {
+                      panic("RU contains empty domain value")
+                  }
 
-          		key := domainKey(domain)
-          		if seen[key] {
-          			panic(fmt.Sprintf("duplicate domain in RU: %s", domain.Value))
-          		}
-          		seen[key] = true
-          		roots[value] = true
+                  key := domainKey(domain)
+                  if seen[key] {
+                      panic(fmt.Sprintf("duplicate domain in RU: %s", domain.Value))
+                  }
+                  seen[key] = true
+                  roots[value] = true
 
-          		if _, ok := expectedTLD[value]; ok {
-          			expectedTLD[value] = true
-          		}
+                  if _, ok := expectedTLD[value]; ok {
+                      expectedTLD[value] = true
+                  }
 
-          		if isRussianTLD(value) &&
-          			value != "ru" && value != "su" && value != "xn--p1ai" {
-          			panic(fmt.Sprintf("Russian TLD leaked into RU: %s", domain.Value))
-          		}
-          	}
+                  if isRussianTLD(value) &&
+                      value != "ru" && value != "su" && value != "xn--p1ai" {
+                      panic(fmt.Sprintf("Russian TLD leaked into RU: %s", domain.Value))
+                  }
+              }
 
-          	for value := range roots {
-          		for parent := value; ; {
-          			dot := strings.IndexByte(parent, '.')
-          			if dot < 0 {
-          				break
-          			}
-          			parent = parent[dot+1:]
-          			if roots[parent] {
-          				panic(fmt.Sprintf(
-          					"redundant child domain in RU: %s is covered by %s",
-          					value,
-          					parent,
-          				))
-          			}
-          		}
-          	}
+              for value := range roots {
+                  for parent := value; ; {
+                      dot := strings.IndexByte(parent, '.')
+                      if dot < 0 {
+                          break
+                      }
+                      parent = parent[dot+1:]
+                      if roots[parent] {
+                          panic(fmt.Sprintf(
+                              "redundant child domain in RU: %s is covered by %s",
+                              value,
+                              parent,
+                          ))
+                      }
+                  }
+              }
 
-          	for name, ok := range expectedTLD {
-          		if !ok {
-          			panic(fmt.Sprintf("RU missing compact TLD: %s", name))
-          		}
-          	}
+              for name, ok := range expectedTLD {
+                  if !ok {
+                      panic(fmt.Sprintf("RU missing compact TLD: %s", name))
+                  }
+              }
 
-          	fmt.Println()
-          	fmt.Println("========================================")
-          	fmt.Println("VALIDATION OK")
-          	fmt.Println("========================================")
-          	fmt.Println("Categories: 1 (RU only)")
-          	fmt.Printf("RU rules:  %d\n", len(ru.Domain))
-          	fmt.Println("Attributes (@ads/@cn): 0 (strictly verified)")
+              fmt.Println()
+              fmt.Println("========================================")
+              fmt.Println("VALIDATION OK")
+              fmt.Println("========================================")
+              fmt.Println("Categories: 1 (RU only)")
+              fmt.Printf("RU rules:  %d\n", len(ru.Domain))
+              fmt.Println("Attributes (@ads/@cn): 0 (strictly verified)")
           }
           EOF
 
