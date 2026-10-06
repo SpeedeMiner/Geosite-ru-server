@@ -80,13 +80,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          for local_list in "$LOCAL_RU_INPUT_FILE"; do
-            if [ ! -f "$local_list" ]; then
-              echo "ERROR: required local list is missing: $local_list" >&2
-              exit 1
-            fi
-          done
-
           echo "========================================"
           echo "Downloading GeoSite sources"
           echo "========================================"
