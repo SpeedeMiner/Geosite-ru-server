@@ -701,7 +701,44 @@ jobs:
           	convertedFullToRootCount := 0
           	removedCoveredDomainCount := 0
           	missingExternalCount := 0
-          
+
+          	// Исключаем из mvrvntn|category-ru только две группы,
+          	// отмеченные в исходном data/category-ru комментариями
+          	// "Direct Gaming" и "Push Notifications".
+          	// Другие источники и остальные домены mvrvntn не затрагиваются.
+          	mvrvntnExcludedDomains := map[string]struct{}{
+          		// Direct Gaming (Battle.net, EA, Ubisoft, Roblox, Gaijin, PoE, MLBB, BattlEye)
+          		"blizzard.com":      {},
+          		"battle.net":        {},
+          		"ea.com":            {},
+          		"ubisoft.com":       {},
+          		"ubi.com":           {},
+          		"roblox.com":        {},
+          		"rbxcdn.com":        {},
+          		"warthunder.com":    {},
+          		"gaijin.net":        {},
+          		"crossout.net":      {},
+          		"enlisted.net":      {},
+          		"pathofexile.com":   {},
+          		"battleye.com":      {},
+          		"mobilelegends.com": {},
+          		"moonton.com":       {},
+          		// Push Notifications (Huawei, Honor & Google FCM)
+          		"push.hicloud.com":      {},
+          		"dbankcloud.com":        {},
+          		"mtalk.google.com":      {},
+          		"fcm.googleapis.com":    {},
+          		"alt1-mtalk.google.com": {},
+          		"alt2-mtalk.google.com": {},
+          		"alt3-mtalk.google.com": {},
+          		"alt4-mtalk.google.com": {},
+          		"alt5-mtalk.google.com": {},
+          		"alt6-mtalk.google.com": {},
+          		"alt7-mtalk.google.com": {},
+          		"alt8-mtalk.google.com": {},
+          	}
+          	excludedMvrvntnDomainCount := 0
+
           	matched := make(map[string]map[string]bool)
           	for source := range sources {
           		matched[source] = make(map[string]bool)
@@ -745,6 +782,14 @@ jobs:
           				value := normalizeName(domain.Value)
           				if value == "" {
           					continue
+          				}
+
+          				// Source-scoped exclusion: apply only to mvrvntn|category-ru.
+          				if source == "mvrvntn" && category == "category-ru" {
+          					if _, excluded := mvrvntnExcludedDomains[value]; excluded {
+          						excludedMvrvntnDomainCount++
+          						continue
+          					}
           				}
           
           				if isRussianTLD(value) {
@@ -857,6 +902,7 @@ jobs:
           	fmt.Printf("Source category matches : %d\n", sourceCategoryCount)
           	fmt.Printf("Source domain rules     : %d\n", sourceDomainCount)
           	fmt.Printf("Written domain rules    : %d\n", writtenDomainCount)
+          	fmt.Printf("Excluded mvrvntn gaming/push domains: %d\n", excludedMvrvntnDomainCount)
           	fmt.Printf("Removed RU TLD rules    : %d\n", removedRussianDomainCount)
           	fmt.Printf("Removed regex/keyword   : %d\n", removedUnsupportedTypeCount)
           	fmt.Printf("Removed duplicates      : %d\n", duplicateDomainCount)
