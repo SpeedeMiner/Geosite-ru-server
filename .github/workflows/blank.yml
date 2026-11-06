@@ -374,7 +374,7 @@ jobs:
               "ru-analytics",
               "ru-cdn",
               "ru-finance",
-              "ru-medical",
+              # ru-medical intentionally omitted: this feed is a list of foreign medical-device vendors.
               "ru-retail-extra",
               "ru-transport",
               "ru-tv",
@@ -411,6 +411,7 @@ jobs:
           PY
 
           cp selected_ru_categories.txt "$CATEGORY_FILE"
+          echo "Excluded source category: grimbird|ru-medical (foreign medical-device vendors)"
 
           echo
           echo "=== Total manifest entries ==="
@@ -446,6 +447,24 @@ jobs:
           
           func normalizeName(value string) string {
           	return strings.ToLower(strings.TrimSpace(value))
+          }
+          
+          // matchesExcludedDomain returns true for an excluded root and every
+          // subdomain below it. This prevents a source from reintroducing an
+          // excluded service through api.example.com / cdn.example.com entries.
+          func matchesExcludedDomain(value string, excluded map[string]struct{}) bool {
+          	value = strings.TrimSuffix(normalizeName(value), ".")
+          	for candidate := value; candidate != ""; {
+          		if _, ok := excluded[candidate]; ok {
+          			return true
+          		}
+          		dot := strings.IndexByte(candidate, '.')
+          		if dot < 0 {
+          			break
+          		}
+          		candidate = candidate[dot+1:]
+          	}
+          	return false
           }
           
           func isRussianTLD(value string) bool {
@@ -692,6 +711,135 @@ jobs:
           	ruCategory := &router.GeoSite{CountryCode: "RU"}
           	globalSeen := make(map[string]bool)
           
+          	foreignExcludedDomains := map[string]struct{}{
+          		// Google/Firebase telemetry: ownership confirmed; exact upstream list not isolated.
+          		// storage.googleapis.com was found in grimbird|ru-cdn.
+          		"app-measurement.com":                  {},
+          		"crashlytics.com":                      {},
+          		"firebaseinstallations.googleapis.com": {},
+          		"storage.googleapis.com":               {},
+          		// BlueStacks / now.gg
+          		"bluestacks.biz":       {},
+          		"bluestacks.com":       {},
+          		"bluestacks.net":       {},
+          		"bluestacksads.com":    {},
+          		"bluestacksapi.com":    {},
+          		"bluestacksapp.com":    {},
+          		"bluestackscdn.com":    {},
+          		"bluestackscloud.com":  {},
+          		"bluestacksdata.com":   {},
+          		"bluestacksengine.com": {},
+          		// HoYoverse / miHoYo
+          		"hoyolab.com":         {},
+          		"hoyoverse.com":       {},
+          		"hoyoverse.net":       {},
+          		"mihoyo.com":          {},
+          		"yuanshen.com":        {},
+          		"zenlesszonezero.com": {},
+          		// Group-IB international domains from runetfreedom|group-ib.
+          		"g-ib.ae":        {},
+          		"g-ib.sg":        {},
+          		"g-ib.us":        {},
+          		"gib-global.com": {},
+          		"gib.sg":         {},
+          		"gibdev.net":     {},
+          		"group-ib.ae":    {},
+          		"group-ib.co.uk": {},
+          		"group-ib.com":   {},
+          		"group-ib.de":    {},
+          		"group-ib.eu":    {},
+          		"group-ib.sg":    {},
+          		"group-ib.us":    {},
+          		"groupib.ae":     {},
+          		"groupib.sg":     {},
+          		"groupib.us":     {},
+          		// ICQ legacy / discontinued, from runetfreedom|mailru-group.
+          		"goicq.org":          {},
+          		"icq-download.com":   {},
+          		"icq-mobile.com":     {},
+          		"icq-online.com":     {},
+          		"icq-phone.com":      {},
+          		"icq-phone.org":      {},
+          		"icq.asia":           {},
+          		"icq.at":             {},
+          		"icq.biz":            {},
+          		"icq.com":            {},
+          		"icq.de":             {},
+          		"icq.eu":             {},
+          		"icq.fr":             {},
+          		"icq.im":             {},
+          		"icq.lt":             {},
+          		"icq.mobi":           {},
+          		"icq.org":            {},
+          		"icq.sg":             {},
+          		"icq2mobile.com":     {},
+          		"icq5.com":           {},
+          		"icqanywhere.com":    {},
+          		"icqbrasil.com":      {},
+          		"icqbrazil.com":      {},
+          		"icqchat.com":        {},
+          		"icqflirting.com":    {},
+          		"icqgame.com":        {},
+          		"icqgames.com":       {},
+          		"icqkids.com":        {},
+          		"icqmail.com":        {},
+          		"icqmail.net":        {},
+          		"icqonline.com":      {},
+          		"icqpassword.com":    {},
+          		"icqpeople.com":      {},
+          		"icqservers.com":     {},
+          		"icqservice.com":     {},
+          		"icqsupportteam.com": {},
+          		"icqsystem.com":      {},
+          		"icqsystems.com":     {},
+          		"icqtoday.com":       {},
+          		"icqtutor.com":       {},
+          		"icqvideo.com":       {},
+          		"mailicq.org":        {},
+          		"mirabilis.com":      {},
+          		"mirandaicq.com":     {},
+          		"mobile-icq.com":     {},
+          		"mobileicq.com":      {},
+          		// International banks: hydra|category-ru and runetfreedom|category-bank-ru;
+          		// bk.mufg.jp and ru.abchina.com were found in the final database too.
+          		"autobahn.db.com": {},
+          		"bk.mufg.jp":      {},
+          		"mizuhogroup.com": {},
+          		"ru.abchina.com":  {},
+          		"ru.ccb.com":      {},
+          		"ubs.com":         {},
+          		// Foreign medical-device vendors: grimbird|ru-medical; medtrum.eu also in hydra|whitelist.
+          		"icancgm.com":  {},
+          		"medtrum.com":  {},
+          		"medtrum.eu":   {},
+          		"mqcgm.com":    {},
+          		"poctech.com":  {},
+          		"sinocare.com": {},
+          		"syailink.com": {},
+          		"yuwell.com":   {},
+          		// MY.GAMES international gaming group, from runetfreedom|mailru-group.
+          		"dev-my.games":     {},
+          		"it-territory.com": {},
+          		"knightspeak.com":  {},
+          		"my.games":         {},
+          		"pixonic.com":      {},
+          		"prod-my.games":    {},
+          		// Steam/Valve: found through mvrvntn|category-ru and vpnyasha|our-games.
+          		"steamcdn-a.akamaihd.net": {},
+          		"steamcontent.com":        {},
+          		"steamgames.com":          {},
+          		"steampowered.com":        {},
+          		"steamserver.net":         {},
+          		"steamstatic.com":         {},
+          		"steamusercontent.com":    {},
+          		"valve.net":               {},
+          		// Other confirmed services: windsurf.com from hydra|whitelist;
+          		// edgecastcdn.net from grimbird|ru-cdn.
+          		"edgecastcdn.net": {},
+          		"windsurf.com":    {},
+          	}
+          	excludedForeignDomainCount := 0
+          
           	sourceCategoryCount := 0
           	sourceDomainCount := 0
           	writtenDomainCount := 0
@@ -701,7 +849,7 @@ jobs:
           	convertedFullToRootCount := 0
           	removedCoveredDomainCount := 0
           	missingExternalCount := 0
-
+          
           	// Исключаем из mvrvntn|category-ru только две группы,
           	// отмеченные в исходном data/category-ru комментариями
           	// "Direct Gaming" и "Push Notifications".
@@ -738,7 +886,7 @@ jobs:
           		"alt8-mtalk.google.com": {},
           	}
           	excludedMvrvntnDomainCount := 0
-
+          
           	matched := make(map[string]map[string]bool)
           	for source := range sources {
           		matched[source] = make(map[string]bool)
@@ -783,13 +931,18 @@ jobs:
           				if value == "" {
           					continue
           				}
-
+          
           				// Source-scoped exclusion: apply only to mvrvntn|category-ru.
           				if source == "mvrvntn" && category == "category-ru" {
-          					if _, excluded := mvrvntnExcludedDomains[value]; excluded {
+          					if matchesExcludedDomain(value, mvrvntnExcludedDomains) {
           						excludedMvrvntnDomainCount++
           						continue
           					}
+          				}
+          
+          				if matchesExcludedDomain(value, foreignExcludedDomains) {
+          					excludedForeignDomainCount++
+          					continue
           				}
           
           				if isRussianTLD(value) {
@@ -836,6 +989,10 @@ jobs:
           	}
           
           	for _, value := range legacyDomains {
+          		if matchesExcludedDomain(value, foreignExcludedDomains) {
+          			excludedForeignDomainCount++
+          			continue
+          		}
           		if isRussianTLD(value) {
           			removedRussianDomainCount++
           			continue
@@ -884,6 +1041,13 @@ jobs:
           		panic("RU category is empty")
           	}
           
+          	// Fail the build if any confirmed foreign root slipped through.
+          	for _, domain := range ruCategory.Domain {
+          		if domain != nil && matchesExcludedDomain(domain.Value, foreignExcludedDomains) {
+          			panic(fmt.Sprintf("confirmed foreign domain leaked into RU: %s", domain.Value))
+          		}
+          	}
+          
           	result.Entry = append(result.Entry, ruCategory)
           
           	outputData, err := proto.MarshalOptions{Deterministic: true}.Marshal(result)
@@ -902,6 +1066,8 @@ jobs:
           	fmt.Printf("Source category matches : %d\n", sourceCategoryCount)
           	fmt.Printf("Source domain rules     : %d\n", sourceDomainCount)
           	fmt.Printf("Written domain rules    : %d\n", writtenDomainCount)
+          	fmt.Printf("Foreign exclusion roots (subdomains included): %d\n", len(foreignExcludedDomains))
+          	fmt.Printf("Excluded confirmed foreign domain rules: %d\n", excludedForeignDomainCount)
           	fmt.Printf("Excluded mvrvntn gaming/push domains: %d\n", excludedMvrvntnDomainCount)
           	fmt.Printf("Removed RU TLD rules    : %d\n", removedRussianDomainCount)
           	fmt.Printf("Removed regex/keyword   : %d\n", removedUnsupportedTypeCount)
