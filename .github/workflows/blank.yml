@@ -29,6 +29,10 @@ jobs:
       KIRILL_GEOSITE_URL: https://github.com/kirilllavrov/RU-domain-list-for-whitelist/releases/latest/download/dlc.dat
       DIGNE_GEOSITE_URL: https://cdn.jsdelivr.net/gh/DigneZzZ/routing@main/v2ray/geosite.dat
       DAVOYAN_LEGACY_URL: https://raw.githubusercontent.com/Davoyan/mihomo-rule-sets/main/domains/category-ru-legacy.txt
+      # Official v2fly source: contains category-ip-geo-detect and its ipip include.
+      V2FLY_GEOSITE_URL: https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat
+      # Independent GeoSite feed; publishes category-ip-geo-detect in geosite.dat
+      DAVOYAN_XRAY_GEOSITE_URL: https://raw.githubusercontent.com/Davoyan/xray-routing/main/release/geosite.dat
 
       INPUT_FILE: source-geosite.dat
       HYDRA_INPUT_FILE: hydra-geosite.dat
@@ -39,6 +43,8 @@ jobs:
       KIRILL_INPUT_FILE: kirill-geosite.dat
       DIGNE_INPUT_FILE: digne-geosite.dat
       DAVOYAN_LEGACY_INPUT_FILE: davoyan-category-ru-legacy.txt
+      V2FLY_INPUT_FILE: v2fly-geosite.dat
+      DAVOYAN_XRAY_INPUT_FILE: davoyan-xray-geosite.dat
       OUTPUT_FILE: geosite_RU.dat
       CATEGORY_FILE: geosite_RU_categories.txt
       OUTPUT_SHA_FILE: geosite_RU.dat.sha256sum
@@ -124,6 +130,14 @@ jobs:
             "$DAVOYAN_LEGACY_URL" \
             -o "$DAVOYAN_LEGACY_INPUT_FILE"
 
+          curl -fL --retry 5 --retry-all-errors \
+            "$V2FLY_GEOSITE_URL" \
+            -o "$V2FLY_INPUT_FILE"
+
+          curl -fL --retry 5 --retry-all-errors \
+            "$DAVOYAN_XRAY_GEOSITE_URL" \
+            -o "$DAVOYAN_XRAY_INPUT_FILE"
+
           test -s "$INPUT_FILE"
           test -s source-geosite.dat.sha256sum
           test -s "$HYDRA_INPUT_FILE"
@@ -134,6 +148,8 @@ jobs:
           test -s "$KIRILL_INPUT_FILE"
           test -s "$DIGNE_INPUT_FILE"
           test -s "$DAVOYAN_LEGACY_INPUT_FILE"
+          test -s "$V2FLY_INPUT_FILE"
+          test -s "$DAVOYAN_XRAY_INPUT_FILE"
           test -s "$GRIMBIRD_INPUT_FILE"
           test -s "$MVR_INPUT_FILE"
           test -s "$YULARZHI_INPUT_FILE"
@@ -141,6 +157,8 @@ jobs:
           test -s "$KIRILL_INPUT_FILE"
           test -s "$DIGNE_INPUT_FILE"
           test -s "$DAVOYAN_LEGACY_INPUT_FILE"
+          test -s "$V2FLY_INPUT_FILE"
+          test -s "$DAVOYAN_XRAY_INPUT_FILE"
 
           echo
           echo "========================================"
@@ -162,7 +180,7 @@ jobs:
 
           echo
           echo "Downloaded sources:"
-          ls -lh "$INPUT_FILE" "$HYDRA_INPUT_FILE" "$GRIMBIRD_INPUT_FILE" "$MVR_INPUT_FILE" "$YULARZHI_INPUT_FILE" "$VPNYASHA_INPUT_FILE" "$KIRILL_INPUT_FILE" "$DIGNE_INPUT_FILE" "$DAVOYAN_LEGACY_INPUT_FILE"
+          ls -lh "$INPUT_FILE" "$HYDRA_INPUT_FILE" "$GRIMBIRD_INPUT_FILE" "$MVR_INPUT_FILE" "$YULARZHI_INPUT_FILE" "$VPNYASHA_INPUT_FILE" "$KIRILL_INPUT_FILE" "$DIGNE_INPUT_FILE" "$DAVOYAN_LEGACY_INPUT_FILE" "$V2FLY_INPUT_FILE" "$DAVOYAN_XRAY_INPUT_FILE"
 
       # ------------------------------------------------------------
       # 5. Build complete RU category manifest
@@ -187,8 +205,6 @@ jobs:
           excluded = {
               # Never merge private/non-RU feeds into the public RU-only pool.
               "private",
-              "category-ip-geo-detect",
-              "ipip",
               "tld-ru",
               "category-geoblock-ru",
           }
@@ -244,6 +260,9 @@ jobs:
 
           # Основное ядро runetfreedom / v2fly
           visit("category-ru")
+
+          # IP geolocation / IP-checker services. Includes are followed recursively.
+          visit("category-ip-geo-detect")
 
           # Автоматически подхватываем новые *-ru категории
           for path in DATA.iterdir():
@@ -324,6 +343,11 @@ jobs:
           for name in hydra_categories:
               if not is_excluded(name):
                   selected.add(f"hydra|{normalize(name)}")
+
+          # Davoyan/xray-routing — независимый GeoSite feed; импортируем только IP-checker category
+          selected.add("v2fly|category-ip-geo-detect")
+          selected.add("v2fly|ipip")
+          selected.add("davoyan_xray|category-ip-geo-detect")
 
           # mvrvntn/routing — только CATEGORY-RU добавляется в общий RU
           mvr_categories = {
@@ -419,7 +443,7 @@ jobs:
 
           echo
           echo "=== External categories merged into RU ==="
-          grep -E '^(hydra|grimbird|mvrvntn|yularzhi|vpnyasha|kirill|digne)\|' "$CATEGORY_FILE"
+          grep -E '^(hydra|grimbird|mvrvntn|yularzhi|vpnyasha|kirill|digne|v2fly|davoyan_xray)\|' "$CATEGORY_FILE"
 
       # ------------------------------------------------------------
       # 6. Create protobuf filter
@@ -668,10 +692,10 @@ jobs:
           }
           
           func main() {
-          	if len(os.Args) != 12 {
+          	if len(os.Args) != 14 {
           		fmt.Fprintf(
           			os.Stderr,
-          			"usage: %s runetfreedom.dat hydra.dat grimbird.dat mvrvntn.dat yularzhi.dat vpnyasha.dat kirill.dat digne.dat davoyan-legacy.txt selected.txt output.dat\n",
+          			"usage: %s runetfreedom.dat hydra.dat grimbird.dat mvrvntn.dat yularzhi.dat vpnyasha.dat kirill.dat digne.dat v2fly.dat davoyan-xray.dat davoyan-legacy.txt selected.txt output.dat\n",
           			os.Args[0],
           		)
           		os.Exit(2)
@@ -686,14 +710,16 @@ jobs:
           		"vpnyasha":     os.Args[6],
           		"kirill":       os.Args[7],
           		"digne":        os.Args[8],
+          		"v2fly":        os.Args[9],
+          		"davoyan_xray": os.Args[10],
           	}
           
-          	legacyDomains, err := loadLegacyDomains(os.Args[9])
+          	legacyDomains, err := loadLegacyDomains(os.Args[11])
           	if err != nil {
           		panic(fmt.Errorf("failed to read Davoyan legacy list: %w", err))
           	}
           
-          	manifest, err := loadManifest(os.Args[10])
+          	manifest, err := loadManifest(os.Args[12])
           	if err != nil {
           		panic(fmt.Errorf("failed to read manifest: %w", err))
           	}
@@ -849,6 +875,7 @@ jobs:
           	convertedFullToRootCount := 0
           	removedCoveredDomainCount := 0
           	missingExternalCount := 0
+          	ipGeoDetectDomainCount := 0
           
           	// Исключаем из mvrvntn|category-ru только две группы,
           	// отмеченные в исходном data/category-ru комментариями
@@ -917,6 +944,9 @@ jobs:
           				}
           
           				sourceDomainCount++
+          				if category == "category-ip-geo-detect" {
+          					ipGeoDetectDomainCount++
+          				}
           
           				switch domain.Type {
           				case router.Domain_RootDomain:
@@ -968,7 +998,7 @@ jobs:
           		}
           	}
           
-          	for _, source := range []string{"hydra", "grimbird", "mvrvntn", "yularzhi", "vpnyasha", "kirill", "digne"} {
+          	for _, source := range []string{"hydra", "grimbird", "mvrvntn", "yularzhi", "vpnyasha", "kirill", "digne", "v2fly", "davoyan_xray"} {
           		for category := range manifest[source] {
           			if !matched[source][category] {
           				fmt.Printf(
@@ -1055,7 +1085,7 @@ jobs:
           		panic(fmt.Errorf("failed to marshal final output DAT: %w", err))
           	}
           
-          	if err := os.WriteFile(os.Args[11], outputData, 0644); err != nil {
+          	if err := os.WriteFile(os.Args[13], outputData, 0644); err != nil {
           		panic(fmt.Errorf("failed to write output DAT: %w", err))
           	}
           
@@ -1065,6 +1095,7 @@ jobs:
           	fmt.Println("========================================")
           	fmt.Printf("Source category matches : %d\n", sourceCategoryCount)
           	fmt.Printf("Source domain rules     : %d\n", sourceDomainCount)
+          	fmt.Printf("IP geo-detect source rules (pre-dedup): %d\n", ipGeoDetectDomainCount)
           	fmt.Printf("Written domain rules    : %d\n", writtenDomainCount)
           	fmt.Printf("Foreign exclusion roots (subdomains included): %d\n", len(foreignExcludedDomains))
           	fmt.Printf("Excluded confirmed foreign domain rules: %d\n", excludedForeignDomainCount)
@@ -1108,6 +1139,8 @@ jobs:
             "$VPNYASHA_INPUT_FILE" \
             "$KIRILL_INPUT_FILE" \
             "$DIGNE_INPUT_FILE" \
+            "$V2FLY_INPUT_FILE" \
+            "$DAVOYAN_XRAY_INPUT_FILE" \
             "$DAVOYAN_LEGACY_INPUT_FILE" \
             selected_ru_categories.txt \
             "$OUTPUT_FILE"
