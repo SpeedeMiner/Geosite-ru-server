@@ -1,0 +1,43 @@
+# Private/special-use namespaces. Include subdomains, not partial labels.
+in-addr.arpa
+ip6.arpa
+home.arpa
+home
+example
+internal
+invalid
+lan
+local
+localdomain
+localhost
+test
+# Public-looking private rules present in the upstream PRIVATE categories.
+asusrouter.com
+hiwifi.com
+instant.arubanetworks.com
+leike.cc
+local.adguard.org
+localhost.ptlogin2.qq.com
+localhost.sec.qq.com
+localhost.weixin.qq.com
+localhost.work.weixin.qq.com
+miwifi.com
+my.router
+oasisauth.h3c.com
+peiluyou.com
+phicomm.me
+plex.direct
+router.asus.com
+router.ctc
+routerlogin.com
+setmeup.arubanetworks.com
+tendawifi.com
+tplinkwifi.net
+tplogin.cn
+ts.net
+# Light BLOCK overlaps not previously DIRECT on Server.
+app-measurement.com
+firebaseinstallations.googleapis.com
+# Reviewed no-DIRECT exclusions inherited from Light.
+4pda.to
+stream.kick.com

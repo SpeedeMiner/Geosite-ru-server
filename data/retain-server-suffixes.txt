@@ -1,0 +1,11 @@
+# Rules present in the previous Server release, absent from Light v11.2.
+alfabank
+gazprom
+kaspersky
+mail
+psk
+rzd
+vk
+vtb
+xn--e1a4c
+xn--j1amh
