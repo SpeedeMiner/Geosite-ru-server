@@ -1,4 +1,4 @@
-"""Project a pinned Light GeoSite DAT into one server RU category.
+"""Project a verified Light GeoSite DAT into one server RU category.
 
 GeoSite protobuf layout: v2fly/v2ray-core/app/router/routercommon/common.proto.
 The retained Domain submessages are copied byte-for-byte, including their type.
@@ -6,7 +6,6 @@ The retained Domain submessages are copied byte-for-byte, including their type.
 
 import argparse
 import hashlib
-import json
 import re
 from pathlib import Path
 
@@ -137,6 +136,13 @@ def project(source, deny, retain):
     return result, incoming, output
 
 
+def coverage_losses(previous, candidate):
+    """Return old rules not covered by an exact match or a suffix in candidate."""
+    return sorted((typ, name) for typ, name in previous
+                  if (typ, name) not in candidate and (ROOT, name) not in candidate
+                  and not any((ROOT, parent) in candidate for parent in ancestors(name)))
+
+
 def policy_list(path):
     items = [line.split("#", 1)[0].strip() for line in path.read_text().splitlines()]
     names = set(filter(None, items))
@@ -153,24 +159,31 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", type=Path)
     parser.add_argument("destination", type=Path)
+    parser.add_argument("--source-sha256", required=True)
+    parser.add_argument("--previous-server", type=Path, required=True)
     parser.add_argument("--policy-dir", type=Path,
                         default=Path(__file__).resolve().parents[1] / "data")
     args = parser.parse_args()
-    config = json.loads((args.policy_dir / "light-source.json").read_text())
     source = args.source.read_bytes()
-    if digest(source) != config["sha256"]:
-        raise SystemExit("Source DAT SHA-256 does not match the pinned Light release")
+    if digest(source) != args.source_sha256:
+        raise SystemExit("Source DAT SHA-256 does not match the Light release")
     deny = policy_list(args.policy_dir / "exclude-server-suffixes.txt")
     retain = policy_list(args.policy_dir / "retain-server-suffixes.txt")
     result, incoming, output = project(source, deny, retain)
+    categories, previous = read_ru(args.previous_server.read_bytes())
+    if categories != {"RU"}:
+        raise SystemExit("Previous Server DAT does not contain exactly one RU category")
+    lost = coverage_losses(previous, output)
+    if lost:
+        examples = ", ".join(f"{'full' if typ == FULL else 'domain'}:{name}" for typ, name in lost[:20])
+        raise SystemExit(f"Candidate would lose {len(lost)} existing Server rules: {examples}")
+    print(f"Server coverage: +{len(coverage_losses(output, previous))} / -0")
     result_sha = digest(result)
-    if result_sha != config["server_sha256"]:
-        raise SystemExit(f"Projected Server DAT SHA-256 does not match the reviewed build: {result_sha}")
     args.destination.mkdir(parents=True, exist_ok=True)
     (args.destination / "geosite_RU.dat").write_bytes(result)
     (args.destination / "geosite_RU.dat.sha256sum").write_text(f"{result_sha}  geosite_RU.dat\n")
     (args.destination / "geosite_RU_categories.txt").write_text("RU\n")
-    print(f'Light {config["tag"]}: {len(incoming)} RU rules')
+    print(f"Light RU: {len(incoming)} rules")
     print(f'Server RU: {len(output)} rules, {sum(t == FULL for t, _ in output)} exact hostnames')
     print(f'Excluded from Light RU: {sum(excluded(*key, deny) for key in incoming)} rules')
     print(f'Additional Server suffixes: {sum(key not in incoming for key in output)}')

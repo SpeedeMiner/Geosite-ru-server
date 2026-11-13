@@ -1,6 +1,6 @@
 import unittest
 
-from project_geosite import FULL, ROOT, REQUIRED_ROOTS, encode, message, project, read_ru
+from project_geosite import FULL, ROOT, REQUIRED_ROOTS, coverage_losses, encode, message, project, read_ru
 
 
 def rule(typ, name):
@@ -62,6 +62,12 @@ class ProjectionTest(unittest.TestCase):
             project(encode({(ROOT, "ru"): rule(ROOT, "ru")}), {"private.test"}, set())
         with self.assertRaises(ValueError):
             project(fixture(set()), {"router.net"}, {"net"})
+
+    def test_coverage_loss_checks_match_type_and_dns_label_boundaries(self):
+        old = {(ROOT, "example.net"), (FULL, "api.other.net"), (FULL, "notother.net")}
+        candidate = {(FULL, "example.net"), (ROOT, "other.net")}
+        self.assertEqual(coverage_losses(old, candidate), [(ROOT, "example.net"), (FULL, "notother.net")])
+        self.assertFalse(coverage_losses(old, {(ROOT, "net")}))
 
     def test_deterministic_rule_order(self):
         rules = {(ROOT, "z.net"): rule(ROOT, "z.net"), (FULL, "a.net"): rule(FULL, "a.net")}

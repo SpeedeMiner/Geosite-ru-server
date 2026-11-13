@@ -3,6 +3,8 @@ name: Build GeoSite RU Server (RU only)
 on:
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: "17 * * * *"
   push:
     branches: [main]
 
@@ -19,33 +21,62 @@ jobs:
     outputs:
       source_tag: ${{ steps.source.outputs.tag }}
       source_commit: ${{ steps.source.outputs.commit }}
+      source_sha256: ${{ steps.source.outputs.sha256 }}
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Test projection
         run: python3 -m unittest discover -s tools -v
-      - name: Fetch the pinned GeoSite RU Light release
+      - name: Fetch the newest numbered Light release
         id: source
         env:
-          LIGHT_REPO: SpeedeMiner/Geosite-ru-light
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="$(jq -er '.tag' data/light-source.json)"
-          COMMIT="$(jq -er '.commit' data/light-source.json)"
-          [[ "$TAG" =~ ^v[0-9]+(\.[0-9]+){1,2}$ ]]
-          [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]]
-          REMOTE="$(git ls-remote --tags "https://github.com/$LIGHT_REPO.git" \
+          gh api --paginate 'repos/SpeedeMiner/Geosite-ru-light/releases?per_page=100' \
+            | jq -s add > light-releases.json
+          python3 tools/select_light_release.py light-releases.json > light-source.json
+
+          REPO="$(jq -er '.repository' light-source.json)"
+          TAG="$(jq -er '.tag' light-source.json)"
+          REMOTE="$(git ls-remote --exit-code --tags "https://github.com/$REPO.git" \
             "refs/tags/$TAG" "refs/tags/$TAG^{}")"
-          test "$(awk 'END {print $1}' <<< "$REMOTE")" = "$COMMIT"
-          curl -fsSL --retry 3 --connect-timeout 15 --max-time 90 \
-            "https://github.com/$LIGHT_REPO/releases/download/$TAG/geosite_RU.dat" \
-            -o light.dat
-          printf 'tag=%s\ncommit=%s\n' "$TAG" "$COMMIT" >> "$GITHUB_OUTPUT"
-      - name: Build and verify single-category DAT
+          COMMIT="$(awk -v ref="refs/tags/$TAG" '
+            $2 == ref       { tag = $1 }
+            $2 == ref "^{}" { commit = $1 }
+            END { print (commit ? commit : tag) }
+          ' <<< "$REMOTE")"
+          [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]]
+
+          for asset in geosite_RU.dat geosite_RU.dat.sha256sum; do
+            URL="$(jq -er --arg asset "$asset" '.assets[$asset].url' light-source.json)"
+            SHA="$(jq -er --arg asset "$asset" '.assets[$asset].sha256' light-source.json)"
+            curl -fsSL --retry 3 --connect-timeout 15 --max-time 90 "$URL" -o "$asset"
+            printf '%s  %s\n' "$SHA" "$asset" | sha256sum --check --strict
+          done
+          SHA="$(jq -er '.assets["geosite_RU.dat"].sha256' light-source.json)"
+          diff -u <(printf '%s  geosite_RU.dat\n' "$SHA") geosite_RU.dat.sha256sum
+          printf 'tag=%s\ncommit=%s\nsha256=%s\n' "$TAG" "$COMMIT" "$SHA" >> "$GITHUB_OUTPUT"
+          printf 'Using %s %s (%s)\n' "$REPO" "$TAG" "$COMMIT"
+
+      - name: Compare with the published Server DAT and build RU only
+        env:
+          LIGHT_SHA256: ${{ steps.source.outputs.sha256 }}
         run: |
           set -euo pipefail
-          python3 tools/project_geosite.py light.dat dist
+          SERVER_COMMIT="$(git ls-remote --exit-code \
+            "https://github.com/$GITHUB_REPOSITORY.git" refs/heads/release | awk '{print $1}')"
+          [[ "$SERVER_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          mkdir previous
+          for asset in geosite_RU.dat geosite_RU.dat.sha256sum; do
+            curl -fsSL --retry 3 --connect-timeout 15 --max-time 90 \
+              "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$SERVER_COMMIT/$asset" \
+              -o "previous/$asset"
+          done
+          (cd previous && sha256sum --check --strict geosite_RU.dat.sha256sum)
+          python3 tools/project_geosite.py geosite_RU.dat dist \
+            --source-sha256 "$LIGHT_SHA256" --previous-server previous/geosite_RU.dat
           cd dist
           sha256sum -c geosite_RU.dat.sha256sum
           diff -u <(printf 'RU\n') geosite_RU_categories.txt
@@ -71,6 +102,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SOURCE_TAG: ${{ needs.build.outputs.source_tag }}
           SOURCE_COMMIT: ${{ needs.build.outputs.source_commit }}
+          SOURCE_SHA256: ${{ needs.build.outputs.source_sha256 }}
         run: |
           set -euo pipefail
           cd dist
@@ -78,10 +110,19 @@ jobs:
           diff -u <(printf 'RU\n') geosite_RU_categories.txt
           FILES=(geosite_RU.dat geosite_RU.dat.sha256sum geosite_RU_categories.txt)
           TITLE="GeoSite RU Server $SOURCE_TAG (RU only)"
-          NOTES="Based on GeoSite RU Light $SOURCE_TAG ($SOURCE_COMMIT). The DAT contains exactly one category, RU, without private namespaces or separate BLOCK and Hydra categories. Server-specific suffixes are retained and full rules remain exact. Source: https://github.com/SpeedeMiner/Geosite-ru-light/releases/tag/$SOURCE_TAG"
+          NOTES="Based on GeoSite RU Light $SOURCE_TAG ($SOURCE_COMMIT, input SHA-256 $SOURCE_SHA256). The DAT contains exactly one category, RU, without private namespaces or separate BLOCK and Hydra categories. Server-specific suffixes are retained and full rules remain exact. Source: https://github.com/SpeedeMiner/Geosite-ru-light/releases/tag/$SOURCE_TAG"
           CHECK="$(mktemp -d)"
           STAGE="$(mktemp -d)"
           trap 'rm -rf "$CHECK" "$STAGE"' EXIT
+
+          # Never replace a newer Server release if a Light release is deleted.
+          PUBLISHED="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            | jq -r '.[] | select(.draft == false and .prerelease == false) | .tag_name | select(test("^v[0-9]+(\\.[0-9]+){0,2}$"))')"
+          HIGHEST="$(printf '%s\n%s\n' "$PUBLISHED" "$SOURCE_TAG" | sort -V | tail -n 1)"
+          if [[ "$SOURCE_TAG" != "$HIGHEST" ]]; then
+            echo "Light $SOURCE_TAG is older than Server $HIGHEST. Keeping the published release."
+            exit 0
+          fi
 
           if gh release view "$SOURCE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release download "$SOURCE_TAG" --repo "$GITHUB_REPOSITORY" --dir "$CHECK"
@@ -91,9 +132,22 @@ jobs:
               --target "$GITHUB_SHA" --title "$TITLE" --notes "$NOTES" --latest=false
           fi
 
-          gh release upload latest-optimized "${FILES[@]}" --clobber --repo "$GITHUB_REPOSITORY"
-          gh release edit latest-optimized --repo "$GITHUB_REPOSITORY" \
-            --title "$TITLE" --notes "$NOTES" --latest
+          # Compare the published digests, so recurring builds do not re-upload identical assets.
+          ROLLING="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/latest-optimized")"
+          changed=()
+          for file in "${FILES[@]}"; do
+            EXPECTED="sha256:$(sha256sum "$file" | awk '{print $1}')"
+            CURRENT="$(jq -r --arg name "$file" '.assets[] | select(.name == $name) | .digest' <<< "$ROLLING")"
+            if [[ "$CURRENT" != "$EXPECTED" ]]; then changed+=("$file"); fi
+          done
+          if (( ${#changed[@]} )); then
+            gh release upload latest-optimized "${changed[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+          fi
+          if [[ "$(jq -r '.name' <<< "$ROLLING")" != "$TITLE" ||
+                "$(jq -r '.body' <<< "$ROLLING")" != "$NOTES" ]]; then
+            gh release edit latest-optimized --repo "$GITHUB_REPOSITORY" \
+              --title "$TITLE" --notes "$NOTES" --latest
+          fi
           OLD_TAG="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/latest-optimized" --jq '.object.sha')"
           if [[ "$OLD_TAG" != "$GITHUB_SHA" ]]; then
             gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/latest-optimized" \
@@ -105,14 +159,15 @@ jobs:
             "https://github.com/$GITHUB_REPOSITORY.git" "$STAGE"
           cp "${FILES[@]}" "$STAGE/"
           git -C "$STAGE" add -- "${FILES[@]}"
-          if ! git -C "$STAGE" diff --cached --quiet; then
+          mapfile -t raw_changed < <(git -C "$STAGE" diff --cached --name-only)
+          if (( ${#raw_changed[@]} )); then
             git -C "$STAGE" -c user.name='github-actions[bot]' \
               -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
               commit -m "Publish GeoSite RU Server $SOURCE_TAG"
             git -C "$STAGE" push origin HEAD:release
           fi
 
-          for file in "${FILES[@]}"; do
+          for file in "${raw_changed[@]}"; do
             curl -sS --connect-timeout 5 --max-time 15 \
               "https://purge.jsdelivr.net/gh/$GITHUB_REPOSITORY@release/$file" >/dev/null || true
           done
