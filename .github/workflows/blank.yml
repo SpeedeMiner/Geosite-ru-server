@@ -63,18 +63,22 @@ jobs:
       - name: Compare with the published Server DAT and build RU only
         env:
           LIGHT_SHA256: ${{ steps.source.outputs.sha256 }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           SERVER_COMMIT="$(git ls-remote --exit-code \
             "https://github.com/$GITHUB_REPOSITORY.git" refs/heads/release | awk '{print $1}')"
           [[ "$SERVER_COMMIT" =~ ^[0-9a-f]{40}$ ]]
           mkdir previous
-          for asset in geosite_RU.dat geosite_RU.dat.sha256sum; do
-            curl -fsSL --retry 3 --connect-timeout 15 --max-time 90 \
-              "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$SERVER_COMMIT/$asset" \
-              -o "previous/$asset"
-          done
-          (cd previous && sha256sum --check --strict geosite_RU.dat.sha256sum)
+          curl -fsSL --retry 3 --connect-timeout 15 --max-time 90 \
+            "https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$SERVER_COMMIT/geosite_RU.dat" \
+            -o previous/geosite_RU.dat
+          # The CDN branch contains runtime DAT only. Its expected digest is
+          # independently pinned by the published rolling GitHub Release.
+          PREVIOUS_DIGEST="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/latest-optimized" \
+            --jq '.assets[] | select(.name == "geosite_RU.dat") | .digest')"
+          [[ "$PREVIOUS_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          printf '%s  %s\n' "${PREVIOUS_DIGEST#sha256:}" previous/geosite_RU.dat | sha256sum --check --strict
           python3 tools/project_geosite.py geosite_RU.dat dist \
             --source-sha256 "$LIGHT_SHA256" --previous-server previous/geosite_RU.dat
           cd dist
@@ -157,8 +161,14 @@ jobs:
           gh auth setup-git --hostname github.com
           git clone -q --depth=1 --single-branch --branch release \
             "https://github.com/$GITHUB_REPOSITORY.git" "$STAGE"
-          cp "${FILES[@]}" "$STAGE/"
-          git -C "$STAGE" add -- "${FILES[@]}"
+          cp geosite_RU.dat "$STAGE/"
+          for old in geosite_RU.dat.sha256sum geosite_RU_categories.txt; do
+            if git -C "$STAGE" ls-files --error-unmatch -- "$old" >/dev/null 2>&1; then
+              git -C "$STAGE" rm -- "$old"
+            fi
+          done
+          git -C "$STAGE" add -- geosite_RU.dat
+          diff -u <(printf 'geosite_RU.dat\n') <(git -C "$STAGE" ls-files)
           mapfile -t raw_changed < <(git -C "$STAGE" diff --cached --name-only)
           if (( ${#raw_changed[@]} )); then
             git -C "$STAGE" -c user.name='github-actions[bot]' \
