@@ -101,7 +101,7 @@ jobs:
         with:
           name: geosite-ru-server
           path: dist
-      - name: Publish versioned release, rolling release and raw branch
+      - name: Publish or verify the numbered release, then update rolling and raw
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_TAG: ${{ needs.build.outputs.source_tag }}
@@ -130,7 +130,23 @@ jobs:
 
           if gh release view "$SOURCE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release download "$SOURCE_TAG" --repo "$GITHUB_REPOSITORY" --dir "$CHECK"
-            for file in "${FILES[@]}"; do cmp "$file" "$CHECK/$file"; done
+            cmp geosite_RU_categories.txt "$CHECK/geosite_RU_categories.txt"
+            if cmp -s geosite_RU.dat "$CHECK/geosite_RU.dat"; then
+              cmp geosite_RU.dat.sha256sum "$CHECK/geosite_RU.dat.sha256sum"
+            else
+              # An approved rolling-only correction atop Light v11.21.
+              # Require the exact old and new verified Server snapshots.
+              # Never overwrite or retag a historical numbered release.
+              [[ "$SOURCE_TAG" == v11.21 ]]
+              OLD_SHA=1dd78b8d35d3469aa5868a5300e3311c4a1618ab05e7e8bec3281c79d8b86efd
+              NEW_SHA=0ddfe436d683ef803ca2cafba3736322a2c6390d50f30ba77f88ffbf15cbb83d
+              printf '%s  %s\n' "$OLD_SHA" "$CHECK/geosite_RU.dat" | sha256sum --check --strict
+              printf '%s  geosite_RU.dat\n' "$OLD_SHA" | cmp - "$CHECK/geosite_RU.dat.sha256sum"
+              printf '%s  geosite_RU.dat\n' "$NEW_SHA" | sha256sum --check --strict
+              TITLE="GeoSite RU Server (RU only, rolling update)"
+              NOTES="$(printf '%s\n\n%s' "$NOTES" \
+                "This rolling snapshot excludes habr.com and its subdomains as reviewed in Light PR #44. The numbered Server release $SOURCE_TAG is unchanged.")"
+            fi
           else
             gh release create "$SOURCE_TAG" "${FILES[@]}" --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" --title "$TITLE" --notes "$NOTES" --latest=false
