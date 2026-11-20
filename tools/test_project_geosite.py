@@ -1,6 +1,6 @@
 import unittest
 
-from project_geosite import FULL, ROOT, REQUIRED_ROOTS, coverage_losses, encode, message, project, read_ru
+from project_geosite import FULL, ROOT, REQUIRED_ROOTS, coverage_losses, encode, message, project, read_ru, verify_coverage
 
 
 def rule(typ, name):
@@ -68,6 +68,25 @@ class ProjectionTest(unittest.TestCase):
         candidate = {(FULL, "example.net"), (ROOT, "other.net")}
         self.assertEqual(coverage_losses(old, candidate), [(ROOT, "example.net"), (FULL, "notother.net")])
         self.assertFalse(coverage_losses(old, {(ROOT, "net")}))
+
+    def test_approved_habr_removal_keeps_other_coverage_and_blocks_reintroduction(self):
+        old = {(ROOT, "ru"), (ROOT, "habr.com"), (ROOT, "habrastorage.org")}
+        candidate = old - {(ROOT, "habr.com")}
+        self.assertEqual(verify_coverage(old, candidate), [(ROOT, "habr.com")])
+        self.assertEqual(verify_coverage(candidate, candidate), [])
+        with self.assertRaisesRegex(ValueError, "existing Server rules"):
+            verify_coverage(old, {(ROOT, "ru")})
+        for reintroduced in ((ROOT, "habr.com"), (FULL, "www.habr.com"), (ROOT, "com")):
+            with self.subTest(reintroduced=reintroduced), self.assertRaisesRegex(ValueError, "still routes habr"):
+                verify_coverage(candidate, candidate | {reintroduced})
+
+    def test_habr_policy_projects_historical_input_without_excluding_habr_storage(self):
+        _, _, rules = project(fixture({
+            (ROOT, "habr.com"), (ROOT, "com"), (FULL, "api.habr.com"),
+            (ROOT, "habrastorage.org"), (FULL, "not-habr.com"),
+        }), {"habr.com"}, set())
+        self.assertEqual(set(rules) - {(ROOT, n) for n in REQUIRED_ROOTS},
+                         {(ROOT, "habrastorage.org"), (FULL, "not-habr.com")})
 
     def test_deterministic_rule_order(self):
         rules = {(ROOT, "z.net"): rule(ROOT, "z.net"), (FULL, "a.net"): rule(FULL, "a.net")}

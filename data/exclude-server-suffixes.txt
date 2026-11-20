@@ -41,3 +41,4 @@ firebaseinstallations.googleapis.com
 # Reviewed no-DIRECT exclusions inherited from Light.
 4pda.to
 stream.kick.com
+habr.com

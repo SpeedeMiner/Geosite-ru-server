@@ -11,6 +11,7 @@ from pathlib import Path
 
 ROOT, FULL = 2, 3
 DOMAIN = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")
+REVIEWED_REMOVAL = (ROOT, "habr.com")
 REQUIRED_ROOTS = {"ru", "su", "xn--p1ai", "by", "kz", "xn--90ais", "xn--80ao21a"}
 
 
@@ -143,6 +144,19 @@ def coverage_losses(previous, candidate):
                   and not any((ROOT, parent) in candidate for parent in ancestors(name)))
 
 
+def verify_coverage(previous, candidate):
+    """Allow only the reviewed historical Habr suffix loss and no reintroduction."""
+    if any(excluded(typ, name, {REVIEWED_REMOVAL[1]}) for typ, name in candidate):
+        raise ValueError("Candidate still routes habr.com or its subtree via RU")
+    losses = coverage_losses(previous, candidate)
+    unexpected = [key for key in losses if key != REVIEWED_REMOVAL]
+    if unexpected:
+        examples = ", ".join(f"{'full' if typ == FULL else 'domain'}:{name}"
+                             for typ, name in unexpected[:20])
+        raise ValueError(f"Candidate would lose {len(unexpected)} existing Server rules: {examples}")
+    return losses
+
+
 def policy_list(path):
     items = [line.split("#", 1)[0].strip() for line in path.read_text().splitlines()]
     names = set(filter(None, items))
@@ -173,11 +187,11 @@ def main():
     categories, previous = read_ru(args.previous_server.read_bytes())
     if categories != {"RU"}:
         raise SystemExit("Previous Server DAT does not contain exactly one RU category")
-    lost = coverage_losses(previous, output)
-    if lost:
-        examples = ", ".join(f"{'full' if typ == FULL else 'domain'}:{name}" for typ, name in lost[:20])
-        raise SystemExit(f"Candidate would lose {len(lost)} existing Server rules: {examples}")
-    print(f"Server coverage: +{len(coverage_losses(output, previous))} / -0")
+    try:
+        lost = verify_coverage(previous, output)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+    print(f"Server coverage: +{len(coverage_losses(output, previous))} / -{len(lost)}")
     result_sha = digest(result)
     args.destination.mkdir(parents=True, exist_ok=True)
     (args.destination / "geosite_RU.dat").write_bytes(result)
