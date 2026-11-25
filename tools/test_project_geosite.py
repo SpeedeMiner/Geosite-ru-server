@@ -1,6 +1,7 @@
 import unittest
 
-from project_geosite import FULL, ROOT, REQUIRED_ROOTS, coverage_losses, encode, message, project, read_ru, verify_coverage
+from project_geosite import (FULL, ROOT, REQUIRED_ROOTS, REVIEWED_UNREGISTERED,
+                             coverage_losses, encode, message, project, read_ru, verify_coverage)
 
 
 def rule(typ, name):
@@ -87,6 +88,65 @@ class ProjectionTest(unittest.TestCase):
         }), {"habr.com"}, set())
         self.assertEqual(set(rules) - {(ROOT, n) for n in REQUIRED_ROOTS},
                          {(ROOT, "habrastorage.org"), (FULL, "not-habr.com")})
+
+    def test_reviewed_unregistered_losses_are_exactly_typed_and_scoped(self):
+        self.assertEqual(len(REVIEWED_UNREGISTERED), 29)
+        # Independently pinned expected names from Light PR #47.
+        self.assertEqual(REVIEWED_UNREGISTERED, {
+            "aksyuterian.com",
+            "aodahl.com",
+            "avito-services.com",
+            "bluestacksads.com",
+            "bluestacksapi.com",
+            "bluestackscdn.com",
+            "bluestackscloud.com",
+            "bluestacksdata.com",
+            "bluestacksengine.com",
+            "bonus-card.ml",
+            "cdn-tinkoff.com",
+            "honestmark.org",
+            "investalfabank.com",
+            "lead-pro2023.online",
+            "rosbank-credit.com",
+            "russieactuelle.fr",
+            "sberfinance.net",
+            "sbruss.store",
+            "smsemailstats.com",
+            "tbankjob.site",
+            "tinkoff-anketa.site",
+            "tinkoff-digital.com",
+            "tinkoffdigital.com",
+            "tinkoffip.site",
+            "tinkoffreg.site",
+            "tynkoff.cc",
+            "vk.cloud",
+            "vkcache.com",
+            "vkusvill.net",
+        })
+        keep = {(ROOT, "ru"), (FULL, "unrelated.example.net"), (ROOT, "habrastorage.org")}
+        reviewed = {(ROOT, name) for name in REVIEWED_UNREGISTERED}
+        old = keep | reviewed | {(ROOT, "habr.com")}
+        self.assertEqual(set(verify_coverage(old, keep)), reviewed | {(ROOT, "habr.com")})
+        self.assertEqual(verify_coverage(keep, keep), [])
+        for extra in ((ROOT, "unrelated.net"), (FULL, "cdn-tinkoff.com"),
+                      (FULL, "api.cdn-tinkoff.com"), (ROOT, "api.cdn-tinkoff.com")):
+            with self.subTest(extra=extra), self.assertRaisesRegex(ValueError, "existing Server rules"):
+                verify_coverage(old | {extra}, keep)
+
+    def test_reviewed_unregistered_subtrees_cannot_return(self):
+        keep = {(ROOT, "ru"), (ROOT, "not-cdn-tinkoff.com"), (FULL, "com")}
+        for name in REVIEWED_UNREGISTERED:
+            parent = name.split(".", 1)[1]
+            for key in ((ROOT, name), (FULL, name), (ROOT, "api." + name),
+                        (FULL, "api." + name), (ROOT, parent)):
+                with self.subTest(key=key):
+                    with self.assertRaisesRegex(ValueError, "still routes"):
+                        verify_coverage(keep, keep | {key})
+                    _, _, result = project(fixture({key} | keep), REVIEWED_UNREGISTERED, set())
+                    self.assertNotIn(key, result)
+        self.assertEqual(verify_coverage(keep, keep), [])
+        with self.assertRaisesRegex(ValueError, "retained server rule conflicts"):
+            project(fixture(set()), REVIEWED_UNREGISTERED, {"cdn-tinkoff.com"})
 
     def test_deterministic_rule_order(self):
         rules = {(ROOT, "z.net"): rule(ROOT, "z.net"), (FULL, "a.net"): rule(FULL, "a.net")}
