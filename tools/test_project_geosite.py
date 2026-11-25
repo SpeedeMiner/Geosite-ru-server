@@ -1,7 +1,11 @@
+import subprocess
+import sys
+import tempfile
 import unittest
+from pathlib import Path
 
-from project_geosite import (FULL, ROOT, REQUIRED_ROOTS, REVIEWED_UNREGISTERED,
-                             coverage_losses, encode, message, project, read_ru, verify_coverage)
+from project_geosite import (FULL, ROOT, REQUIRED_ROOTS, coverage_losses,
+                             digest, encode, message, project, read_ru)
 
 
 def rule(typ, name):
@@ -70,17 +74,6 @@ class ProjectionTest(unittest.TestCase):
         self.assertEqual(coverage_losses(old, candidate), [(ROOT, "example.net"), (FULL, "notother.net")])
         self.assertFalse(coverage_losses(old, {(ROOT, "net")}))
 
-    def test_approved_habr_removal_keeps_other_coverage_and_blocks_reintroduction(self):
-        old = {(ROOT, "ru"), (ROOT, "habr.com"), (ROOT, "habrastorage.org")}
-        candidate = old - {(ROOT, "habr.com")}
-        self.assertEqual(verify_coverage(old, candidate), [(ROOT, "habr.com")])
-        self.assertEqual(verify_coverage(candidate, candidate), [])
-        with self.assertRaisesRegex(ValueError, "existing Server rules"):
-            verify_coverage(old, {(ROOT, "ru")})
-        for reintroduced in ((ROOT, "habr.com"), (FULL, "www.habr.com"), (ROOT, "com")):
-            with self.subTest(reintroduced=reintroduced), self.assertRaisesRegex(ValueError, "still routes habr"):
-                verify_coverage(candidate, candidate | {reintroduced})
-
     def test_habr_policy_projects_historical_input_without_excluding_habr_storage(self):
         _, _, rules = project(fixture({
             (ROOT, "habr.com"), (ROOT, "com"), (FULL, "api.habr.com"),
@@ -89,64 +82,50 @@ class ProjectionTest(unittest.TestCase):
         self.assertEqual(set(rules) - {(ROOT, n) for n in REQUIRED_ROOTS},
                          {(ROOT, "habrastorage.org"), (FULL, "not-habr.com")})
 
-    def test_reviewed_unregistered_losses_are_exactly_typed_and_scoped(self):
-        self.assertEqual(len(REVIEWED_UNREGISTERED), 29)
-        # Independently pinned expected names from Light PR #47.
-        self.assertEqual(REVIEWED_UNREGISTERED, {
-            "aksyuterian.com",
-            "aodahl.com",
-            "avito-services.com",
-            "bluestacksads.com",
-            "bluestacksapi.com",
-            "bluestackscdn.com",
-            "bluestackscloud.com",
-            "bluestacksdata.com",
-            "bluestacksengine.com",
-            "bonus-card.ml",
-            "cdn-tinkoff.com",
-            "honestmark.org",
-            "investalfabank.com",
-            "lead-pro2023.online",
-            "rosbank-credit.com",
-            "russieactuelle.fr",
-            "sberfinance.net",
-            "sbruss.store",
-            "smsemailstats.com",
-            "tbankjob.site",
-            "tinkoff-anketa.site",
-            "tinkoff-digital.com",
-            "tinkoffdigital.com",
-            "tinkoffip.site",
-            "tinkoffreg.site",
-            "tynkoff.cc",
-            "vk.cloud",
-            "vkcache.com",
-            "vkusvill.net",
-        })
-        keep = {(ROOT, "ru"), (FULL, "unrelated.example.net"), (ROOT, "habrastorage.org")}
-        reviewed = {(ROOT, name) for name in REVIEWED_UNREGISTERED}
-        old = keep | reviewed | {(ROOT, "habr.com")}
-        self.assertEqual(set(verify_coverage(old, keep)), reviewed | {(ROOT, "habr.com")})
-        self.assertEqual(verify_coverage(keep, keep), [])
-        for extra in ((ROOT, "unrelated.net"), (FULL, "cdn-tinkoff.com"),
-                      (FULL, "api.cdn-tinkoff.com"), (ROOT, "api.cdn-tinkoff.com")):
-            with self.subTest(extra=extra), self.assertRaisesRegex(ValueError, "existing Server rules"):
-                verify_coverage(old | {extra}, keep)
-
-    def test_reviewed_unregistered_subtrees_cannot_return(self):
-        keep = {(ROOT, "ru"), (ROOT, "not-cdn-tinkoff.com"), (FULL, "com")}
-        for name in REVIEWED_UNREGISTERED:
-            parent = name.split(".", 1)[1]
-            for key in ((ROOT, name), (FULL, name), (ROOT, "api." + name),
-                        (FULL, "api." + name), (ROOT, parent)):
-                with self.subTest(key=key):
-                    with self.assertRaisesRegex(ValueError, "still routes"):
-                        verify_coverage(keep, keep | {key})
-                    _, _, result = project(fixture({key} | keep), REVIEWED_UNREGISTERED, set())
-                    self.assertNotIn(key, result)
-        self.assertEqual(verify_coverage(keep, keep), [])
-        with self.assertRaisesRegex(ValueError, "retained server rule conflicts"):
-            project(fixture(set()), REVIEWED_UNREGISTERED, {"cdn-tinkoff.com"})
+    def test_cli_follows_light_removals_and_restorations_without_approval(self):
+        # Reproduce the two losses from run 45617111327, plus an arbitrary
+        # suffix and exact hostname. Restore a previously removed Light name.
+        removed = {(ROOT, "vtbkep.site"), (ROOT, "xn--90aifd0aza.site"),
+                   (ROOT, "old-service.net"), (FULL, "api.old-service.org")}
+        restored = (ROOT, "cdn-tinkoff.com")
+        kept = (FULL, "api.current-service.net")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            old = tmp / "old.dat"
+            source = tmp / "light.dat"
+            dist = tmp / "dist"
+            # Use the actual Server policy, including retained suffixes.
+            from project_geosite import policy_list
+            policy = Path(__file__).resolve().parents[1] / "data"
+            deny = policy_list(policy / "exclude-server-suffixes.txt")
+            retain = policy_list(policy / "retain-server-suffixes.txt")
+            previous, _, _ = project(fixture(removed | {kept}), deny, retain)
+            old.write_bytes(previous)
+            source.write_bytes(fixture({restored, kept, (ROOT, "habr.com"),
+                                        (ROOT, "4pda.to"), (FULL, "api.routerlogin.com")}))
+            command = [sys.executable, str(Path(__file__).with_name("project_geosite.py")),
+                       str(source), str(dist), "--source-sha256", digest(source.read_bytes()),
+                       "--previous-server", str(old)]
+            run = subprocess.run(command, capture_output=True, text=True, check=True)
+            self.assertIn("Server coverage: +1 / -4", run.stdout)
+            for typ, name in removed:
+                self.assertIn(f"Removed coverage: {'full' if typ == FULL else 'domain'}:{name}",
+                              run.stdout)
+            categories, result = read_ru((dist / "geosite_RU.dat").read_bytes())
+            self.assertEqual(categories, {"RU"})
+            self.assertIn(restored, result)
+            self.assertIn(kept, result)
+            self.assertTrue(removed.isdisjoint(result))
+            self.assertTrue({(ROOT, "habr.com"), (ROOT, "4pda.to"),
+                             (FULL, "api.routerlogin.com")}.isdisjoint(result))
+            self.assertTrue({(ROOT, name) for name in retain} <= set(result))
+            self.assertEqual((dist / "geosite_RU.dat.sha256sum").read_text(),
+                             digest((dist / "geosite_RU.dat").read_bytes()) + "  geosite_RU.dat\n")
+            # A corrupt source checksum still fails, regardless of the relaxed delta policy.
+            command[5] = "0" * 64
+            bad = subprocess.run(command, capture_output=True, text=True)
+            self.assertNotEqual(bad.returncode, 0)
+            self.assertIn("Source DAT SHA-256 does not match", bad.stderr)
 
     def test_deterministic_rule_order(self):
         rules = {(ROOT, "z.net"): rule(ROOT, "z.net"), (FULL, "a.net"): rule(FULL, "a.net")}
