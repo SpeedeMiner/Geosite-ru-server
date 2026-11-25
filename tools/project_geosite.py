@@ -11,44 +11,6 @@ from pathlib import Path
 
 ROOT, FULL = 2, 3
 DOMAIN = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")
-REVIEWED_REMOVAL = (ROOT, "habr.com")
-# Reviewed in Light PR #47, registration preflight 2026-11-24.
-# https://github.com/SpeedeMiner/Geosite-ru-light/pull/47
-# Pin the reviewed policy locally; never authorize losses from live input.
-REVIEWED_UNREGISTERED = frozenset({
-    "aksyuterian.com",
-    "aodahl.com",
-    "avito-services.com",
-    "bluestacksads.com",
-    "bluestacksapi.com",
-    "bluestackscdn.com",
-    "bluestackscloud.com",
-    "bluestacksdata.com",
-    "bluestacksengine.com",
-    "bonus-card.ml",
-    "cdn-tinkoff.com",
-    "honestmark.org",
-    "investalfabank.com",
-    "lead-pro2023.online",
-    "rosbank-credit.com",
-    "russieactuelle.fr",
-    "sberfinance.net",
-    "sbruss.store",
-    "smsemailstats.com",
-    "tbankjob.site",
-    "tinkoff-anketa.site",
-    "tinkoff-digital.com",
-    "tinkoffdigital.com",
-    "tinkoffip.site",
-    "tinkoffreg.site",
-    "tynkoff.cc",
-    "vk.cloud",
-    "vkcache.com",
-    "vkusvill.net",
-})
-REVIEWED_REMOVALS = frozenset({REVIEWED_REMOVAL}) | frozenset(
-    (ROOT, name) for name in REVIEWED_UNREGISTERED
-)
 REQUIRED_ROOTS = {"ru", "su", "xn--p1ai", "by", "kz", "xn--90ais", "xn--80ao21a"}
 
 
@@ -181,22 +143,6 @@ def coverage_losses(previous, candidate):
                   and not any((ROOT, parent) in candidate for parent in ancestors(name)))
 
 
-def verify_coverage(previous, candidate):
-    """Allow only explicitly reviewed suffix losses; reject restored coverage."""
-    if any(excluded(typ, name, {REVIEWED_REMOVAL[1]}) for typ, name in candidate):
-        raise ValueError("Candidate still routes habr.com or its subtree via RU")
-    for typ, name in candidate:
-        if excluded(typ, name, REVIEWED_UNREGISTERED):
-            raise ValueError(f"Candidate still routes reviewed unregistered subtree via RU: {name}")
-    losses = coverage_losses(previous, candidate)
-    unexpected = [key for key in losses if key not in REVIEWED_REMOVALS]
-    if unexpected:
-        examples = ", ".join(f"{'full' if typ == FULL else 'domain'}:{name}"
-                             for typ, name in unexpected[:20])
-        raise ValueError(f"Candidate would lose {len(unexpected)} existing Server rules: {examples}")
-    return losses
-
-
 def policy_list(path):
     items = [line.split("#", 1)[0].strip() for line in path.read_text().splitlines()]
     names = set(filter(None, items))
@@ -221,17 +167,19 @@ def main():
     source = args.source.read_bytes()
     if digest(source) != args.source_sha256:
         raise SystemExit("Source DAT SHA-256 does not match the Light release")
-    deny = policy_list(args.policy_dir / "exclude-server-suffixes.txt") | REVIEWED_UNREGISTERED
+    deny = policy_list(args.policy_dir / "exclude-server-suffixes.txt")
     retain = policy_list(args.policy_dir / "retain-server-suffixes.txt")
     result, incoming, output = project(source, deny, retain)
     categories, previous = read_ru(args.previous_server.read_bytes())
     if categories != {"RU"}:
         raise SystemExit("Previous Server DAT does not contain exactly one RU category")
-    try:
-        lost = verify_coverage(previous, output)
-    except ValueError as error:
-        raise SystemExit(str(error)) from error
-    print(f"Server coverage: +{len(coverage_losses(output, previous))} / -{len(lost)}")
+    # Light owns the RU inventory. The previous Server snapshot is diagnostic,
+    # not a coverage floor: reviewed upstream additions and removals both flow through.
+    lost = coverage_losses(previous, output)
+    added = coverage_losses(output, previous)
+    print(f"Server coverage: +{len(added)} / -{len(lost)}")
+    for typ, name in lost:
+        print(f"Removed coverage: {'full' if typ == FULL else 'domain'}:{name}")
     result_sha = digest(result)
     args.destination.mkdir(parents=True, exist_ok=True)
     (args.destination / "geosite_RU.dat").write_bytes(result)
